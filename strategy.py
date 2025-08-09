@@ -34,7 +34,7 @@ class MarketMakingStrategy:
         best_ask = orderbook['asks'][0][0]
         spread = (best_ask - best_bid) / best_bid
         
-        if spread > self.config.BASE_SPREAD * 5:  # Don't trade in very wide markets
+        if spread > self.config.BASE_SPREAD * 15:  # Don't trade in very wide markets
             self.logger.warning(f"Spread too wide: {spread:.4f}")
             return False
             
@@ -57,8 +57,8 @@ class MarketMakingStrategy:
             position_skew = position_ratio * base_spread * 0.5
         
         # Calculate bid and ask prices
-        bid_price = round(fair_price * (1 - base_spread / 2 - position_skew), 5)
-        ask_price = round(fair_price * (1 + base_spread / 2 - position_skew), 5)
+        bid_price = round(fair_price * (1 - base_spread / 2 - position_skew), 2)
+        ask_price = round(fair_price * (1 + base_spread / 2 - position_skew), 2)
         
         return bid_price, ask_price
     
