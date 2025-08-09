@@ -13,15 +13,15 @@ class TradingConfig:
     TESTNET: bool = False #os.getenv('HYPERLIQUID_TESTNET', 'false').lower() == 'true'
     
     # Trading parameters
-    SYMBOL: str = "MAVIA"  # Hyperliquid uses coin symbols like "BTC", "ETH"
+    SYMBOL: str = "AAVE"  # Hyperliquid uses coin symbols like "BTC", "ETH"
     BASE_SPREAD: float = 0.001  # 0.1% spread
     
     # Position sizing (choose ONE approach)
     USE_PERCENTAGE_SIZING: bool = True  # Set to False for fixed sizing
     
     # Percentage-based sizing (when USE_PERCENTAGE_SIZING = True)
-    ORDER_SIZE_PCT: float = 1.5  # 25% of account value per order
-    MAX_POSITION_PCT: float = 3.0  # 99% of account value max position
+    ORDER_SIZE_PCT: float = 10.0  # 25% of account value per order
+    MAX_POSITION_PCT: float = 40.0  # 99% of account value max position
 
     # Fixed sizing (when USE_PERCENTAGE_SIZING = False)
    # ORDER_SIZE: float = 0.01    # Fixed order size in base currency
