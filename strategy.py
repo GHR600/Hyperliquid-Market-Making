@@ -66,7 +66,7 @@ class MarketMakingStrategy:
         print("✅ Conditions favorable for order placement")
         return True
     
-    def calculate_order_prices(self, fair_price: float, position: Optional[Position], signals: Optional[MarketSignals] = None) -> Tuple[float, float]:
+    def calculate_order_prices(self, fair_price: float, position: Optional[Position], signals: Optional[MarketSignals] = None, tick_size: float = 0.5) -> Tuple[float, float]:
         """Calculate bid and ask prices for orders with microstructure adjustments"""
         print("📈 Calculating order prices...")
         
@@ -118,9 +118,13 @@ class MarketMakingStrategy:
         total_skew = position_skew + flow_skew
         
         # Calculate bid and ask prices
-        bid_price = round(fair_price * (1 - adjusted_spread / 2 - total_skew), 2)
-        ask_price = round(fair_price * (1 + adjusted_spread / 2 - total_skew), 2)
+        raw_bid_price = fair_price * (1 - adjusted_spread / 2 - total_skew)
+        raw_ask_price = fair_price * (1 + adjusted_spread / 2 - total_skew)
         
+        # Round to appropriate decimals
+        bid_price = self._round_price_to_decimals(raw_bid_price, tick_size)
+        ask_price = self._round_price_to_decimals(raw_ask_price, tick_size)
+            
         print(f"   💵 Final prices: bid=${bid_price:.5f}, ask=${ask_price:.5f}")
         print(f"   📏 Effective spread: {((ask_price - bid_price) / fair_price * 100):.3f}%")
 
@@ -133,11 +137,25 @@ class MarketMakingStrategy:
             return 0.0
         
         # Round down using floor division approach
-        multiplier = 10 ** self.config.SIZE_DECIMALS
-        rounded_size = int(size * multiplier) / multiplier
+        rounded_size = round(size, self.config.SIZE_DECIMALS)
         
         print(f"      📏 Size rounding: {size:.6f} -> {rounded_size:.{self.config.SIZE_DECIMALS}f} ({self.config.SIZE_DECIMALS} decimals)")
         return rounded_size
+    
+    def _round_price_to_decimals(self, price: float, tick_size: float = 0.5) -> float:
+        """Round price to valid tick increments for the symbol"""
+        if price <= 0:
+            return 0.0
+
+        # Round to nearest tick
+        rounded_price = round(price / tick_size) * tick_size
+        
+        # Ensure we don't exceed the decimal precision rules
+        max_decimals = self.config.PRICE_DECIMALS
+        final_price = round(rounded_price, max_decimals)
+        
+        print(f"      💰 Price rounding: {price:.5f} -> tick_rounded: {rounded_price:.5f} -> final: {final_price:.{max_decimals}f}")
+        return final_price
     
     def calculate_order_sizes(self, position: Optional[Position], current_price: float, account_value: float, signals: Optional[MarketSignals] = None) -> Tuple[float, float]:
         """Calculate order sizes with microstructure-based adjustments"""
@@ -235,6 +253,39 @@ class MarketMakingStrategy:
             print(f"   📋 Final sizes: bid={bid_size:.{self.config.SIZE_DECIMALS}f}, ask={ask_size:.{self.config.SIZE_DECIMALS}f}")
             print(f"   📊 Position limits: current={current_position:.4f}, max_buy={max_buy:.4f}, max_sell={max_sell:.4f}")
 
+            if self.config.USE_PERCENTAGE_SIZING:
+                max_position_dollar = account_value * self.config.MAX_POSITION_PCT / 100
+                max_position = max_position_dollar / current_price
+                
+                print(f"   🔍 POSITION DEBUG:")
+                print(f"       Account value: ${account_value:.2f}")
+                print(f"       MAX_POSITION_PCT: {self.config.MAX_POSITION_PCT}%")
+                print(f"       Max position dollar: ${max_position_dollar:.2f}")
+                print(f"       Current price: ${current_price:.2f}")
+                print(f"       Max position BTC: {max_position:.8f}")
+
+            max_buy = max_position - current_position
+            max_sell = current_position + max_position
+            
+            print(f"   🔍 DEBUG: adjusted_base_size = {adjusted_base_size:.8f}")
+            print(f"   🔍 DEBUG: max_buy = {max_buy:.8f}")
+            print(f"   🔍 DEBUG: max_sell = {max_sell:.8f}")
+            print(f"   🔍 DEBUG: self.config.MIN_ORDER_SIZE = {self.config.MIN_ORDER_SIZE}")
+
+            # Apply size rounding BEFORE final size calculation
+            raw_bid_size = min(adjusted_base_size, max_buy) if max_buy > self.config.MIN_ORDER_SIZE else 0
+            raw_ask_size = min(adjusted_base_size, max_sell) if max_sell > self.config.MIN_ORDER_SIZE else 0
+            
+            print(f"   🔍 DEBUG: raw_bid_size = {raw_bid_size:.8f}")
+            print(f"   🔍 DEBUG: raw_ask_size = {raw_ask_size:.8f}")
+            
+            # Round sizes to appropriate decimals
+            bid_size = self._round_size_to_decimals(raw_bid_size)
+            ask_size = self._round_size_to_decimals(raw_ask_size)
+            
+            print(f"   🔍 DEBUG: final bid_size = {bid_size:.8f}")
+            print(f"   🔍 DEBUG: final ask_size = {ask_size:.8f}")
+            
             return bid_size, ask_size
             
         except Exception as e:
@@ -245,10 +296,13 @@ class MarketMakingStrategy:
             return 0.0, 0.0
     
     def generate_orders(self, orderbook: Dict, position: Optional[Position], account_value: float, signals: Optional[MarketSignals] = None) -> List[Dict]:
+
         """Generate Hyperliquid-compatible order specifications with microstructure integration"""
         print("🎯 Generating orders...")
         orders = []
         
+        tick_size = orderbook.get('tick_size', 0.5)  # Add this
+
         try:
             if not self.should_place_orders(position, orderbook, signals):
                 print("❌ Conditions not favorable - no orders generated")
@@ -262,7 +316,7 @@ class MarketMakingStrategy:
             print("📈 Calculating order parameters...")
             
             # Calculate order prices - this should return a tuple
-            price_result = self.calculate_order_prices(fair_price, position, signals)
+            price_result = self.calculate_order_prices(fair_price, position, signals, tick_size)
             print(f"   🔍 Price result type: {type(price_result)}, value: {price_result}")
             
             if price_result is None:
