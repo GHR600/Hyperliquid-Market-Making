@@ -95,7 +95,7 @@ class DataManager:
             if max_leverage is not None:
                 self.config.MAX_LEVERAGE = float(max_leverage)
                 # Update max position to use max leverage
-                self.config.MAX_POSITION_PCT = self.config.MAX_LEVERAGE
+                #self.config.MAX_POSITION_PCT = self.config.MAX_LEVERAGE  ##------THIS ENABLES MANUAL OVERIDE-----
                 print(f"   ⚡ Max leverage: {self.config.MAX_LEVERAGE}x")
                 print(f"   📊 Max position updated to: {self.config.MAX_POSITION_PCT}x")
             else:
@@ -147,7 +147,7 @@ class DataManager:
                 return None
             
             processed_book = self._process_orderbook(book)
-            
+
             if processed_book:
                 # Detect and store tick size
                 tick_size = self._detect_tick_size(processed_book)
@@ -333,6 +333,17 @@ class DataManager:
             order_list = orders or []
             
             print(f"✅ Found {len(order_list)} open orders")
+            print(f"🔍 Raw API response: {orders}")  # Add this line
+
+            #Log each order
+            for i, order in enumerate(order_list):
+                oid = order.get('oid', 'N/A')
+                coin = order.get('coin', 'N/A') 
+                side = order.get('side', 'N/A')
+                size = order.get('sz', 'N/A')
+                price = order.get('limitPx', 'N/A')
+                print(f"   📋 Order {i+1}: {oid} | {coin} | {side} | {size} @ ${price}")
+
             
             # Log order summary
             if order_list:
