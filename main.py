@@ -113,15 +113,22 @@ class HyperliquidMarketMaker:
             else:
                 print("❌ Failed to retrieve account info")
             
-            # Fetch open orders using API wallet (the one that placed them)
+            # Use your specified account address for order queries
+            from config import account_address #= "0x32BE427D44f7eA8076f62190bd3a7d0FDceF076c"
+            
+            # Fetch open orders using account address (where orders actually are)
             print("📋 Fetching open orders...")
-            open_orders = await self.data_manager.get_open_orders(self.trading_client.user_address)
+            print(f"🔍 API wallet address: {self.trading_client.user_address}")
+            print(f"🔍 Master wallet address: {master_address}")
+            print(f"🔍 Account address for orders: {account_address}")
+            
+            open_orders = await self.data_manager.get_open_orders(account_address)
             if open_orders is not None:
                 print(f"✅ Retrieved {len(open_orders)} open orders")
                 self.position_tracker.update_from_open_orders(open_orders)
             else:
                 print("❌ Failed to retrieve open orders")
-            
+        
         except Exception as e:
             print(f"❌ Error updating positions and orders: {e}")
             self.logger.error(f"Error updating positions and orders: {e}")
@@ -248,6 +255,19 @@ class HyperliquidMarketMaker:
             print(f"❌ Error in trading logic: {e}")
             self.logger.error(f"Error in trading logic: {e}")
 
+        if current_orders and fair_price:
+            print("🔍 Evaluating existing orders...")
+            print(f"   📋 Found {len(current_orders)} orders to evaluate")
+            for order in current_orders:
+                print(f"   📋 Order: {order.order_id} | {order.side} | ${order.price} | {order.size}")
+            
+            orders_to_cancel = self.strategy.should_cancel_orders(current_orders, fair_price, signals)
+            print(f"   📋 Orders marked for cancellation: {len(orders_to_cancel)}")
+            
+            if orders_to_cancel:
+                print(f"❌ Cancelling {len(orders_to_cancel)} orders...")
+                # ... rest of cancellation logic
+
     async def log_status(self, fair_price: Optional[float]):
         """Log current trading status"""
         print("\n📊 CURRENT STATUS")
@@ -353,6 +373,8 @@ class HyperliquidMarketMaker:
             await self.trading_loop()
         finally:
             await self.cleanup()
+
+    
 
 # Main execution
 if __name__ == "__main__":

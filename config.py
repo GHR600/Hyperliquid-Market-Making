@@ -8,7 +8,7 @@ class TradingConfig:
     PRIVATE_KEY: str = "0xaf9fcec0eaefdded38e03236b70aa42bfde3f5145a2ca9e49f0687c012a9b1a5"
     # Account data - Master wallet address for balance/position queries  
     MASTER_WALLET_ADDRESS: str = "0x32BE427D44f7eA8076f62190bd3a7d0FDceF076c"
-    
+    account_address = "0x32BE427D44f7eA8076f62190bd3a7d0FDceF076c"
     TESTNET: bool = False
     
     # Trading parameters
@@ -29,7 +29,7 @@ class TradingConfig:
 
     # Risk management
     MAX_ORDERS_PER_SIDE: int = 3
-    REBALANCE_THRESHOLD: float = 0.0005  # 0.05%
+    REBALANCE_THRESHOLD: float = 0.05  # 0.05%
     MIN_ORDER_SIZE: float = 0.00000001  # Minimum order size
     MIN_ACCOUNT_VALUE: float = 1.0  # Minimum account value to trade
     
