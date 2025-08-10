@@ -93,7 +93,7 @@ class DataManager:
                 print(f"   ⚠️  Size decimals not found - using default: {self.config.SIZE_DECIMALS}")
             
             # Extract max leverage
-            max_leverage = symbol_info.get("maxLeverage")
+            max_leverage = symbol_info.get("maxLeverage") *10
             if max_leverage is not None:
                 self.config.MAX_LEVERAGE = float(max_leverage)
                 # Update max position to use max leverage

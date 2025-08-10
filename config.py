@@ -5,7 +5,7 @@ from typing import List
 @dataclass
 class TradingConfig:
     # Exchange settings - SDK handles authentication automatically
-    PRIVATE_KEY: str = "0xaf9fcec0eaefdded38e03236b70aa42bfde3f5145a2ca9e49f0687c012a9b1a5"
+    PRIVATE_KEY: str = ""
     # Account data - Master wallet address for balance/position queries  
     MASTER_WALLET_ADDRESS: str = "0x32BE427D44f7eA8076f62190bd3a7d0FDceF076c"
     account_address = "0x32BE427D44f7eA8076f62190bd3a7d0FDceF076c"
@@ -13,26 +13,44 @@ class TradingConfig:
     
     # Trading parameters
     SYMBOL: str = "LINK"  # Hyperliquid uses coin symbols like "BTC", "ETH"
-    BASE_SPREAD: float = 0.003  # 0.1% spread
+    BASE_SPREAD: float = 0.003  # 0.3% spread
     
     # Symbol-specific parameters (will be auto-fetched)
     SIZE_DECIMALS: int = 2  # Will be updated from API
-    PRICE_DECIMALS: int = 8 - SIZE_DECIMALS  # Will be updated from API - NEW
+    PRICE_DECIMALS: int = 8 - SIZE_DECIMALS  # Will be updated from API
     MAX_LEVERAGE: float = 8000.0  # Will be updated from API
     
     # Position sizing (choose ONE approach)
     USE_PERCENTAGE_SIZING: bool = True  # Set to False for fixed sizing
     
     # Percentage-based sizing (when USE_PERCENTAGE_SIZING = True)
-    ORDER_SIZE_PCT: float = 300.0  # 1% of account value per order
+    ORDER_SIZE_PCT: float = 300.0  # 300% of account value per order
     MAX_POSITION_PCT: float = 8000.0  # Will be set to max leverage from API
 
     # Risk management
     MAX_ORDERS_PER_SIDE: int = 3
-    REBALANCE_THRESHOLD: float = 0.01  # 0.05%
+    REBALANCE_THRESHOLD: float = 0.01  # 1%
     MIN_ORDER_SIZE: float = 0.00000001  # Minimum order size
     MIN_ACCOUNT_VALUE: float = 1.0  # Minimum account value to trade
     
+    # =================== LEARNING PHASE ===================
+    
+    # Learning phase settings
+    LEARNING_PHASE_DURATION: float = 300.0  # 5 minutes in seconds (adjust as needed)
+    ENABLE_LEARNING_PHASE: bool = True      # Set to False to skip learning phase
+    
+    # Learning phase behavior
+    LEARNING_PHASE_UPDATE_INTERVAL: float = 2.0  # Faster updates during learning
+    LEARNING_PHASE_LOG_INTERVAL: float = 30.0    # Log progress every 30 seconds
+    
+    # Minimum data requirements before going live
+    MIN_ORDERBOOK_SNAPSHOTS: int = 50   # Minimum orderbook updates needed
+    MIN_TRADE_EVENTS: int = 20          # Minimum trades observed
+    
+    # What to collect during learning
+    COLLECT_SPREAD_STATISTICS: bool = True
+    COLLECT_VOLUME_STATISTICS: bool = True
+    COLLECT_PRICE_MOVEMENT_STATS: bool = True
     
     # =================== FASTER ORDER MANAGEMENT ===================
     
