@@ -114,7 +114,7 @@ class HyperliquidMarketMaker:
                 print("❌ Failed to retrieve account info")
             
             # Use your specified account address for order queries
-            from config import account_address #= "0x32BE427D44f7eA8076f62190bd3a7d0FDceF076c"
+            account_address = "0x32BE427D44f7eA8076f62190bd3a7d0FDceF076c"
             
             # Fetch open orders using account address (where orders actually are)
             print("📋 Fetching open orders...")

@@ -13,7 +13,7 @@ class TradingConfig:
     
     # Trading parameters
     SYMBOL: str = "BTC"  # Hyperliquid uses coin symbols like "BTC", "ETH"
-    BASE_SPREAD: float = 0.001  # 0.1% spread
+    BASE_SPREAD: float = 0.0001  # 0.1% spread
     
     # Symbol-specific parameters (will be auto-fetched)
     SIZE_DECIMALS: int = 2  # Will be updated from API
@@ -24,7 +24,7 @@ class TradingConfig:
     USE_PERCENTAGE_SIZING: bool = True  # Set to False for fixed sizing
     
     # Percentage-based sizing (when USE_PERCENTAGE_SIZING = True)
-    ORDER_SIZE_PCT: float = 200.0  # 1% of account value per order
+    ORDER_SIZE_PCT: float = 300.0  # 1% of account value per order
     MAX_POSITION_PCT: float = 8000.0  # Will be set to max leverage from API
 
     # Risk management
@@ -34,8 +34,8 @@ class TradingConfig:
     MIN_ACCOUNT_VALUE: float = 1.0  # Minimum account value to trade
     
     # Timing
-    UPDATE_INTERVAL: float = 2.0  # seconds
-    ORDER_REFRESH_INTERVAL: float = 3.0  # seconds
+    UPDATE_INTERVAL: float = 1.0  # seconds
+    ORDER_REFRESH_INTERVAL: float = 1.0  # seconds
     
     # Safety
     ENABLE_TRADING: bool = True  # Set to True when ready
