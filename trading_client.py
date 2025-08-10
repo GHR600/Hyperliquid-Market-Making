@@ -129,8 +129,8 @@ class TradingClient:
             return [None] * len(orders)
     
     async def cancel_orders(self, order_ids: List[str]) -> bool:
-        """Cancel multiple orders with detailed logging"""
-        print(f"\n❌ CANCELLING {len(order_ids)} ORDERS")
+        """Cancel orders one by one using single order cancel"""
+        print(f"\n❌ CANCELLING {len(order_ids)} ORDERS (ONE BY ONE)")
         print("-" * 30)
         
         if not self.exchange or not self.config.ENABLE_TRADING:
@@ -140,31 +140,74 @@ class TradingClient:
             self.logger.info(f"Paper trading: Would cancel orders {order_ids}")
             return True
         
-        print(f"🚨 LIVE TRADING - Cancelling {len(order_ids)} real orders")
+        if not order_ids:
+            print("⚠️ No orders to cancel")
+            return True
         
-        try:
-            # Format for Hyperliquid cancel request
-            cancels = [{'coin': self.config.SYMBOL, 'oid': oid} for oid in order_ids]
-            
-            print(f"   📋 Cancel requests prepared:")
-            for i, cancel_req in enumerate(cancels):
-                print(f"      {i+1}. {cancel_req['coin']} order {cancel_req['oid']}")
-            
-            print(f"   🔄 Submitting cancellation request...")
-            response = self.exchange.cancel(cancels)
-            
-            print(f"   📡 Response received: {response}")
-            
-            if response and response.get('status') == 'ok':
-                print(f"   ✅ All orders cancelled successfully!")
-                self.logger.info(f"Cancelled {len(order_ids)} orders successfully")
-                return True
-            else:
-                print(f"   ❌ Cancellation failed: {response}")
-                self.logger.error(f"Failed to cancel orders: {response}")
-                return False
+        print(f"🚨 LIVE TRADING - Cancelling {len(order_ids)} orders individually")
+        
+        successful_cancels = 0
+        failed_cancels = 0
+        
+        for i, order_id in enumerate(order_ids):
+            try:
+                print(f"   🔄 Cancelling order {i+1}/{len(order_ids)}: {order_id}")
                 
-        except Exception as e:
-            print(f"❌ CRITICAL ERROR in order cancellation: {e}")
-            self.logger.error(f"Error cancelling orders: {e}")
-            return False
+                # Convert order_id to int if it's a string (common Hyperliquid requirement)
+                try:
+                    oid_param = int(order_id)
+                    print(f"      Using integer oid: {oid_param}")
+                except ValueError:
+                    oid_param = order_id
+                    print(f"      Using string oid: {oid_param}")
+                
+                # Call exchange.cancel() with single oid parameter
+                response = self.exchange.cancel(oid=oid_param)
+                
+                print(f"      📡 Response: {response}")
+                
+                # Check if cancellation was successful
+                if response and response.get('status') == 'ok':
+                    successful_cancels += 1
+                    print(f"      ✅ Order {order_id} cancelled successfully")
+                    self.logger.info(f"Successfully cancelled order {order_id}")
+                else:
+                    failed_cancels += 1
+                    print(f"      ❌ Order {order_id} cancel failed: {response}")
+                    self.logger.warning(f"Failed to cancel order {order_id}: {response}")
+                    
+            except Exception as e:
+                failed_cancels += 1
+                print(f"      ❌ Exception cancelling order {order_id}: {e}")
+                self.logger.error(f"Exception cancelling order {order_id}: {e}")
+                
+                # Try alternative format as fallback
+                try:
+                    print(f"      🔄 Trying alternative format for {order_id}...")
+                    # Some SDKs expect exchange.cancel(coin, oid)
+                    alt_response = self.exchange.cancel(self.config.SYMBOL, order_id)
+                    
+                    if alt_response and alt_response.get('status') == 'ok':
+                        successful_cancels += 1
+                        failed_cancels -= 1  # Correct the count
+                        print(f"      ✅ Order {order_id} cancelled with alternative method")
+                    else:
+                        print(f"      ❌ Alternative method also failed for {order_id}")
+                        
+                except Exception as alt_error:
+                    print(f"      ❌ Alternative method exception: {alt_error}")
+        
+        print(f"\n📊 CANCELLATION SUMMARY:")
+        print(f"   ✅ Successful: {successful_cancels}/{len(order_ids)}")
+        print(f"   ❌ Failed: {failed_cancels}/{len(order_ids)}")
+        
+        # Consider it successful if we cancelled more than half
+        success = successful_cancels > len(order_ids) // 2
+        
+        if successful_cancels > 0:
+            self.logger.info(f"Cancelled {successful_cancels}/{len(order_ids)} orders")
+        
+        if failed_cancels > 0:
+            self.logger.warning(f"Failed to cancel {failed_cancels}/{len(order_ids)} orders")
+        
+        return success

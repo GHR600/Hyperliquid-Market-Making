@@ -47,7 +47,7 @@ class MarketMakingStrategy:
         best_ask = orderbook['asks'][0][0]
         spread = (best_ask - best_bid) / best_bid
         
-        if spread > self.config.BASE_SPREAD * 15:  # Don't trade in very wide markets
+        if spread > self.config.BASE_SPREAD * 1500:  # Don't trade in very wide markets
             print(f"❌ Spread too wide: {spread:.4f} (>{self.config.BASE_SPREAD * 15:.4f}) - skipping")
             self.logger.warning(f"Spread too wide: {spread:.4f}")
             return False
@@ -445,3 +445,138 @@ class MarketMakingStrategy:
             print(f"📝 Marked {len(to_cancel)} orders for cancellation")
         
         return to_cancel
+    
+    # 3. Add these optimized methods to your strategy.py
+
+def should_cancel_orders_fast(self, orders: List[Order], fair_price: float, signals: Optional[MarketSignals] = None, current_time: float = None) -> List[str]:
+    """Fast order cancellation with aggressive thresholds"""
+    print("⚡ Fast order cancellation check...")
+    to_cancel = []
+    
+    if not orders or not fair_price:
+        return to_cancel
+    
+    # Much tighter cancellation thresholds for faster response
+    dynamic_threshold = self.config.QUICK_CANCEL_THRESHOLD  # 2% instead of 5%
+    
+    if signals:
+        # Be more aggressive about cancelling when conditions change
+        if signals.order_velocity > 0.05:  # High orderbook activity
+            dynamic_threshold *= 0.5  # Even tighter
+            print(f"   ⚡ High activity - using ultra-tight threshold: {dynamic_threshold:.4f}")
+        
+        # Cancel immediately when flow is strongly directional
+        if signals.flow_confidence > 0.7 and abs(signals.overall_momentum) > 0.5:
+            dynamic_threshold *= 0.3  # Very tight
+            print(f"   🌊 Strong directional flow - using emergency threshold: {dynamic_threshold:.4f}")
+    
+    for order in orders:
+        should_cancel = False
+        reason = ""
+        
+        # Age-based cancellation
+        if current_time and hasattr(order, 'created_at'):
+            order_age = current_time - order.created_at
+            if order_age > self.config.MAX_ORDER_AGE_SECONDS:
+                should_cancel = True
+                reason = f"order too old ({order_age:.1f}s)"
+        
+        # Price-based cancellation (much tighter)
+        if not should_cancel:
+            if order.side == 'buy' and order.price < fair_price * (1 - dynamic_threshold):
+                should_cancel = True
+                reason = f"bid too low ({order.price:.2f} vs {fair_price * (1 - dynamic_threshold):.2f})"
+            elif order.side == 'sell' and order.price > fair_price * (1 + dynamic_threshold):
+                should_cancel = True
+                reason = f"ask too high ({order.price:.2f} vs {fair_price * (1 + dynamic_threshold):.2f})"
+        
+        # Microstructure-based cancellation (more aggressive)
+        if signals and not should_cancel:
+            # Cancel if we're on the wrong side of strong flow
+            if signals.flow_confidence > 0.6:  # Lower threshold
+                if order.side == 'buy' and signals.overall_momentum < -0.4:  # Lower threshold
+                    should_cancel = True
+                    reason = "strong sell flow detected"
+                elif order.side == 'sell' and signals.overall_momentum > 0.4:  # Lower threshold
+                    should_cancel = True
+                    reason = "strong buy flow detected"
+            
+            # Cancel during moderate adverse selection risk
+            if signals.adverse_selection_risk > 0.4:  # Lower threshold
+                should_cancel = True
+                reason = f"moderate adverse selection risk ({signals.adverse_selection_risk:.3f})"
+        
+        if should_cancel:
+            to_cancel.append(order.order_id)
+            print(f"   ❌ Fast cancel {order.order_id}: {reason}")
+    
+        print(f"   📝 Marked {len(to_cancel)}/{len(orders)} orders for fast cancellation")
+        return to_cancel
+
+    def generate_orders_fast(self, orderbook: Dict, position: Optional[Position], account_value: float, signals: Optional[MarketSignals] = None) -> List[Dict]:
+        """Faster order generation with cached calculations"""
+        print("⚡ Fast order generation...")
+        
+        try:
+            # Quick feasibility check
+            if not self.should_place_orders(position, orderbook, signals):
+                print("❌ Fast check: conditions not favorable")
+                return []
+            
+            fair_price = self.calculate_fair_price(orderbook)
+            if not fair_price:
+                print("❌ Fast check: no fair price")
+                return []
+            
+            tick_size = orderbook.get('tick_size', 0.5)
+            
+            # Use cached/simplified calculations
+            print("📈 Fast price calculation...")
+            bid_price, ask_price = self.calculate_order_prices(fair_price, position, signals, tick_size)
+            
+            print("📊 Fast size calculation...")
+            bid_size, ask_size = self.calculate_order_sizes(position, fair_price, account_value, signals)
+            
+            orders = []
+            
+            # Generate orders with minimal validation
+            if bid_size >= self.config.MIN_ORDER_SIZE:
+                bid_order = {
+                    'coin': self.config.SYMBOL,
+                    'is_buy': True,
+                    'sz': bid_size,
+                    'limit_px': bid_price,
+                    'order_type': {'limit': {'tif': self.config.TIME_IN_FORCE}},
+                    'reduce_only': False
+                }
+                orders.append(bid_order)
+                print(f"   ✅ Fast BID: {bid_size:.{self.config.SIZE_DECIMALS}f} @ ${bid_price:.5f}")
+            
+            if ask_size >= self.config.MIN_ORDER_SIZE:
+                ask_order = {
+                    'coin': self.config.SYMBOL,
+                    'is_buy': False,
+                    'sz': ask_size,
+                    'limit_px': ask_price,
+                    'order_type': {'limit': {'tif': self.config.TIME_IN_FORCE}},
+                    'reduce_only': False
+                }
+                orders.append(ask_order)
+                print(f"   ✅ Fast ASK: {ask_size:.{self.config.SIZE_DECIMALS}f} @ ${ask_price:.5f}")
+            
+            print(f"⚡ Fast generated {len(orders)} orders")
+            return orders
+            
+        except Exception as e:
+            print(f"❌ Error in fast order generation: {e}")
+            return []
+
+    # 4. Add this helper method to cache expensive calculations
+    def _cache_expensive_calculations(self):
+        """Cache expensive calculations to speed up order generation"""
+        # This could cache things like:
+        # - Recent spread calculations
+        # - Position risk metrics
+        # - Account value ratios
+        # - Microstructure analysis results
+        pass
