@@ -328,7 +328,7 @@ class MarketMicrostructure:
             first_price = recent_trades[0].price
             last_price = recent_trades[-1].price
             momentum = (last_price - first_price) / first_price
-            self.current_signals.momentum_score = max(-1.0, min(1.0, momentum * 100))  # Scale for readability
+            self.current_signals.momentum_score = max(-1.0, min(1.0, momentum * 1000))  # Scale for readability
             print(f"      Price momentum: {self.current_signals.momentum_score:.3f}")
         
         # Trade velocity
