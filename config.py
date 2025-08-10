@@ -34,7 +34,7 @@ class TradingConfig:
     MIN_ACCOUNT_VALUE: float = 1.0  # Minimum account value to trade
     
     # Timing
-    UPDATE_INTERVAL: float = 1.0  # seconds
+    UPDATE_INTERVAL: float = 5.0  # seconds
     ORDER_REFRESH_INTERVAL: float = 1.0  # seconds
     
     # Safety

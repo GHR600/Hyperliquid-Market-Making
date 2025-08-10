@@ -12,30 +12,6 @@ print(user_state)
 
 import requests
 
-def get_sz_decimals(asset_name="BTC"):
-    url = "https://api.hyperliquid.xyz/info"
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "type": "metaAndAssetCtxs"
-    }
-    response = requests.post(url, json=payload, headers=headers)
-    data = response.json()
+ws = hyperliquid.ws_open()
+ws.subscribe("fills", coin="BTC")  # or your symbol
 
-    # Ensure we have a dictionary to work with
-    if isinstance(data, list):
-        # If API returned a list, take the first element (usually the dict with "universe")
-        if len(data) > 0 and isinstance(data[0], dict):
-            data = data[0]
-        else:
-            raise ValueError("Unexpected API response format.")
-
-    for asset in data.get("universe", []):
-        if asset.get("name") == asset_name:
-            return asset_name, asset.get("szDecimals")
-
-    return asset_name, None
-
-
-# Example usage
-asset, decimals = get_sz_decimals("BTC")
-print(f"Asset: {asset}, Size decimals (szDecimals): {decimals}")

@@ -1,14 +1,15 @@
 import asyncio
 import logging
 import signal
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from config import TradingConfig
 from data_manager import DataManager
 from position_tracker import PositionTracker, Order
 from strategy import MarketMakingStrategy
 from trading_client import TradingClient
 from market_microstructure import MarketMicrostructure
-
+from websocket_manager import DataManagerWithWebSocket
+from data_manager import DataManager
 class HyperliquidMarketMaker:
     def __init__(self):
         print("🚀 Initializing Hyperliquid Market Maker...")
@@ -16,8 +17,9 @@ class HyperliquidMarketMaker:
         self.config = TradingConfig()
         print(f"   📋 Configuration loaded for {self.config.SYMBOL}")
         
-        self.data_manager = DataManager(self.config)
-        print("   📊 Data manager initialized")
+        base_data_manager = DataManager(self.config)
+        self.data_manager = DataManagerWithWebSocket(self.config, base_data_manager)
+        print("   📊 Data manager with WebSocket initialized")
         
         self.position_tracker = PositionTracker(self.config)
         print("   📈 Position tracker initialized")
@@ -36,7 +38,30 @@ class HyperliquidMarketMaker:
         self.logger = self._setup_logging()
         print("   📝 Logging configured")
         print("")
+
+    def handle_real_time_trades(self, trades: List[Dict]):
+        """Handle real-time trade data from WebSocket"""
+        if trades:
+            print(f"🔄 Processing {len(trades)} real-time trades...")
+            # Debug: Show first few trades
+            for trade in trades[:5]:
+                print(f"   Trade: ${trade.get('price', 0):.5f} size={trade.get('size', 0):.6f} side={trade.get('side', 'N/A')}")
+            
+            # Feed to microstructure analyzer
+            self.microstructure.add_trade_events(trades)
         
+        else:
+            print("🚀 WEBSOCKET: Received empty trade list")
+
+    def handle_real_time_orderbook(self, orderbook: Dict):
+        """Handle real-time orderbook data from WebSocket"""
+        if orderbook:
+            print(f"🔄 Processing real-time orderbook update...")
+            print(f"   Mid: ${orderbook.get('mid_price', 0):.5f}")
+            
+            # Feed to microstructure analyzer
+            self.microstructure.add_orderbook_snapshot(orderbook)
+
     def _setup_logging(self):
         """Setup logging configuration"""
         logging.basicConfig(
@@ -65,6 +90,11 @@ class HyperliquidMarketMaker:
         
         print("\n🔌 Initializing data connections...")
         await self.data_manager.initialize()
+        
+        # NEW: Set up real-time callbacks
+        print("🔗 Setting up real-time data callbacks...")
+        self.data_manager.set_trade_callback(self.handle_real_time_trades)
+        self.data_manager.set_orderbook_callback(self.handle_real_time_orderbook)
         
         # Display symbol-specific parameters that were fetched
         symbol_info = self.data_manager.get_symbol_info()
@@ -312,7 +342,7 @@ class HyperliquidMarketMaker:
             self.logger.error(f"Error logging status: {e}")
 
     async def trading_loop(self):
-        """Main trading loop with comprehensive logging"""
+        """Main trading loop with real-time data support"""
         print("\n" + "=" * 60)
         print("🔄 STARTING TRADING LOOP")
         print("=" * 60)
@@ -325,10 +355,21 @@ class HyperliquidMarketMaker:
                 loop_count += 1
                 print(f"\n{'=' * 20} LOOP #{loop_count} {'=' * 20}")
                 
-                # Update market data and microstructure
-                orderbook = await self.update_market_data()
+                print(f"🔍 WebSocket status: real_time_enabled={getattr(self.data_manager, 'real_time_enabled', 'Unknown')}")
+                # If we have WebSocket, we might not need to poll market data as frequently
+                if hasattr(self.data_manager, 'real_time_enabled') and self.data_manager.real_time_enabled:
+                    print("📡 Using real-time data from WebSocket")
+                    # Still need to get orderbook for trading logic
+                    orderbook = await self.data_manager.get_orderbook()
+                    if orderbook:
+                        print(f"📊 REST orderbook: Mid=${orderbook.get('mid_price', 0):.5f}")
+                else:
+                    print("📊 Using REST API polling")
+                    # Fall back to original polling method
+                    orderbook = await self.update_market_data()
+                
                 if not orderbook:
-                    print("⚠️  No market data - waiting before next iteration")
+                    print("⚠️ No market data - waiting before next iteration")
                     await asyncio.sleep(self.config.UPDATE_INTERVAL)
                     continue
                 
@@ -344,16 +385,18 @@ class HyperliquidMarketMaker:
                 # Log current status
                 await self.log_status(fair_price)
                 
-                print(f"\n⏰ Waiting {self.config.UPDATE_INTERVAL}s until next update...")
+                # Longer interval when using WebSocket (since we get real-time updates)
+                sleep_time = self.config.UPDATE_INTERVAL * 2 if hasattr(self.data_manager, 'real_time_enabled') and self.data_manager.real_time_enabled else self.config.UPDATE_INTERVAL
+                print(f"\n⏰ Waiting {sleep_time}s until next update...")
                 print("=" * (42 + len(str(loop_count))))
                 
-                await asyncio.sleep(self.config.UPDATE_INTERVAL)
+                await asyncio.sleep(sleep_time)
                 
             except Exception as e:
                 print(f"\n❌ ERROR IN TRADING LOOP: {e}")
                 self.logger.error(f"Error in trading loop: {e}")
                 print(f"⏰ Waiting {self.config.UPDATE_INTERVAL * 5}s before retry...")
-                await asyncio.sleep(self.config.UPDATE_INTERVAL * 5)  # Wait longer on error
+                await asyncio.sleep(self.config.UPDATE_INTERVAL * 5)
     
     def signal_handler(self, signum, frame):
         """Handle shutdown signals"""
@@ -362,7 +405,7 @@ class HyperliquidMarketMaker:
         self.running = False
     
     async def run(self):
-        """Run the market maker"""
+        """Run the market maker with WebSocket support"""
         # Setup signal handlers
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
@@ -370,8 +413,29 @@ class HyperliquidMarketMaker:
         try:
             await self.initialize()
             self.running = True
+            
+            # Start WebSocket listener as background task
+            ws_task = None
+            if hasattr(self.data_manager, 'real_time_enabled') and self.data_manager.real_time_enabled:
+                print("📡 Starting real-time WebSocket feeds...")
+                ws_task = asyncio.create_task(self.data_manager.start_real_time_feeds())
+                print("📡 Real-time data feeds started in background")
+            else:
+                print("⚠️ WebSocket not available, using REST API only")
+            
+            # Start main trading loop
             await self.trading_loop()
+            
         finally:
+            # Cancel WebSocket task if running
+            if ws_task and not ws_task.done():
+                print("🛑 Stopping WebSocket feeds...")
+                ws_task.cancel()
+                try:
+                    await ws_task
+                except asyncio.CancelledError:
+                    pass
+            
             await self.cleanup()
 
     
