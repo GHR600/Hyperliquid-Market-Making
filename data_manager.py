@@ -63,6 +63,25 @@ class DataManager:
                 print(f"⚠️  Symbol {self.config.SYMBOL} not found in universe - using defaults")
                 return
             
+        
+            # Extract size decimals
+            size_decimals = symbol_info.get("szDecimals")
+            if size_decimals is not None:
+                self.config.SIZE_DECIMALS = int(size_decimals)
+                print(f"   📏 Size decimals: {self.config.SIZE_DECIMALS}")
+                
+                # Calculate price decimals based on Hyperliquid rules
+                # For perps: MAX_DECIMALS (6) - szDecimals
+                # For spot: MAX_DECIMALS (8) - szDecimals  
+                is_spot = symbol_info.get("type") == "spot"  # Check if this field exists
+
+                MAX_DECIMALS = 8 if is_spot else 6  # Assuming perps, change to 8 for spot
+                self.config.PRICE_DECIMALS = MAX_DECIMALS - self.config.SIZE_DECIMALS
+                print(f"   💰 Price decimals: {self.config.PRICE_DECIMALS} (calculated: {MAX_DECIMALS} - {self.config.SIZE_DECIMALS})")
+            else:
+                print(f"   ⚠️  Size decimals not found - using defaults")
+        
+
             # Extract size decimals
             size_decimals = symbol_info.get("szDecimals")
             if size_decimals is not None:
@@ -102,11 +121,12 @@ class DataManager:
         return {
             'symbol': self.config.SYMBOL,
             'size_decimals': self.config.SIZE_DECIMALS,
+            'price_decimals': self.config.PRICE_DECIMALS,
             'max_leverage': self.config.MAX_LEVERAGE,
             'max_position_pct': self.config.MAX_POSITION_PCT
         }
-      
-        
+
+
     async def cleanup(self):
         """Cleanup resources"""
         print("🧹 DataManager cleanup complete")
@@ -127,8 +147,12 @@ class DataManager:
                 return None
             
             processed_book = self._process_orderbook(book)
+            
             if processed_book:
-                print(f"✅ Orderbook fetched - Mid: ${processed_book.get('mid_price', 0):.5f}, Spread: {processed_book.get('spread_pct', 0):.3f}%")
+                # Detect and store tick size
+                tick_size = self._detect_tick_size(processed_book)
+                processed_book['tick_size'] = tick_size  # Add this
+                print(f"✅ Orderbook fetched - Mid: ${processed_book.get('mid_price', 0):.5f}, Tick: ${tick_size}")
             
             return processed_book
                     
@@ -354,3 +378,26 @@ class DataManager:
             print(f"❌ Error fetching user fills: {e}")
             self.logger.error(f"Error fetching user fills: {e}")
             return []
+        
+    def _detect_tick_size(self, orderbook: Dict) -> float:
+        """Detect tick size by analyzing current orderbook prices"""
+        try:
+            bids = orderbook.get('bids', [])
+            if len(bids) >= 2:
+                # Calculate difference between consecutive bid levels
+                price_diffs = []
+                for i in range(min(5, len(bids)-1)):  # Check first 5 levels
+                    diff = abs(bids[i][0] - bids[i+1][0])
+                    if diff > 0:
+                        price_diffs.append(diff)
+                
+                if price_diffs:
+                    # The minimum difference is likely the tick size
+                    tick_size = min(price_diffs)
+                    print(f"   📏 Detected tick size: ${tick_size}")
+                    return tick_size
+        except:
+            pass
+        
+        # Fallback for BTC
+        return 1

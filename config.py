@@ -17,19 +17,20 @@ class TradingConfig:
     
     # Symbol-specific parameters (will be auto-fetched)
     SIZE_DECIMALS: int = 2  # Will be updated from API
-    MAX_LEVERAGE: float = 400.0  # Will be updated from API
+    PRICE_DECIMALS: int = 8 - SIZE_DECIMALS  # Will be updated from API - NEW
+    MAX_LEVERAGE: float = 8000.0  # Will be updated from API
     
     # Position sizing (choose ONE approach)
     USE_PERCENTAGE_SIZING: bool = True  # Set to False for fixed sizing
     
     # Percentage-based sizing (when USE_PERCENTAGE_SIZING = True)
     ORDER_SIZE_PCT: float = 200.0  # 1% of account value per order
-    MAX_POSITION_PCT: float = 400.0  # Will be set to max leverage from API
+    MAX_POSITION_PCT: float = 8000.0  # Will be set to max leverage from API
 
     # Risk management
     MAX_ORDERS_PER_SIDE: int = 3
     REBALANCE_THRESHOLD: float = 0.0005  # 0.05%
-    MIN_ORDER_SIZE: float = 1.0  # Minimum order size
+    MIN_ORDER_SIZE: float = 0.00000001  # Minimum order size
     MIN_ACCOUNT_VALUE: float = 1.0  # Minimum account value to trade
     
     # Timing
