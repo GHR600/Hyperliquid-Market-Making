@@ -100,9 +100,14 @@ class WebSocketManager:
         print("👂 WebSocket listener stopped")
     
     def _handle_trade_message(self, data):
-        """Handle trade/fills messages from SDK"""
+        """Handle trade/fills messages from SDK - FIXED VERSION"""
         try:
             print(f"🔥 Raw trade message received: {data}")
+            
+            # Handle None data
+            if data is None:
+                print("⚠️ Received None trade data")
+                return
             
             # The data should be a list of trade objects
             if isinstance(data, list):
@@ -112,16 +117,18 @@ class WebSocketManager:
             else:
                 trades_data = [data] if data else []
             
-            if not trades_data:
-                print("⚠️ Empty trade data received")
+            # Handle None trades_data
+            if not trades_data or trades_data is None:
+                print("⚠️ Empty or None trade data received")
                 return
             
             # Convert to standard format
             processed_trades = []
             for trade_data in trades_data:
-                processed_trade = self._convert_trade_format(trade_data)
-                if processed_trade:
-                    processed_trades.append(processed_trade)
+                if trade_data is not None:  # Check for None trade_data
+                    processed_trade = self._convert_trade_format(trade_data)
+                    if processed_trade:
+                        processed_trades.append(processed_trade)
             
             if processed_trades:
                 print(f"💹 Processed {len(processed_trades)} real trades from WebSocket!")
@@ -133,10 +140,13 @@ class WebSocketManager:
                 # Call the registered callback
                 if self.trade_callback:
                     self.trade_callback(processed_trades)
-                
+        
         except Exception as e:
             print(f"❌ Error handling trade message: {e}")
+            import traceback
+            traceback.print_exc()
             self.logger.error(f"Trade message handling error: {e}")
+
     
     def _handle_orderbook_message(self, data):
         """Handle orderbook update messages from SDK"""

@@ -100,6 +100,22 @@ class MarketMicrostructure:
         print(f"   - Orderbook history size: {len(self.orderbook_history)}")
         
         self._maybe_update_analysis()
+
+    def get_current_signals(self) -> MarketSignals:
+        """Get the latest market signals"""
+        return self.current_signals
+
+    def get_signal_summary(self) -> Dict:
+        """Get a summary of current signals for logging"""
+        s = self.current_signals
+        return {
+            'flow_confidence': f"{s.flow_confidence:.3f}",
+            'net_buying': f"{s.net_aggressive_buying:.3f}",
+            'volume_imbalance': f"{s.volume_imbalance:.3f}",
+            'momentum': f"{s.overall_momentum:.3f}",
+            'adverse_risk': f"{s.adverse_selection_risk:.3f}",
+            'samples': s.sample_size
+        }
     
     def add_trade_events(self, trades: List[Dict]):
         """Add new trade data"""
@@ -436,29 +452,22 @@ class MarketMicrostructure:
         if len(self.trade_history) < 10:
             return
         
-        sizes = [t.size for t in self.trade_history]
+        sizes = [t.size for t in self.trade_history if t and hasattr(t, 'size')]
+        
+        if not sizes:  # No valid sizes
+            return
         
         self.trade_size_stats['mean'] = np.mean(sizes)
         self.trade_size_stats['std'] = np.std(sizes)
         
-        # Calculate percentiles
+        # Calculate percentiles - FIX: Check if TRADE_SIZE_PERCENTILES exists
         percentiles = {}
-        for p in self.config.TRADE_SIZE_PERCENTILES:
-            percentiles[p] = np.percentile(sizes, p)
+        if hasattr(self.config, 'TRADE_SIZE_PERCENTILES') and self.config.TRADE_SIZE_PERCENTILES:
+            for p in self.config.TRADE_SIZE_PERCENTILES:
+                percentiles[p] = np.percentile(sizes, p)
+        else:
+            # Fallback percentiles
+            for p in [25, 50, 75, 90, 95]:
+                percentiles[p] = np.percentile(sizes, p)
+        
         self.trade_size_stats['percentiles'] = percentiles
-    
-    def get_current_signals(self) -> MarketSignals:
-        """Get the latest market signals"""
-        return self.current_signals
-    
-    def get_signal_summary(self) -> Dict:
-        """Get a summary of current signals for logging"""
-        s = self.current_signals
-        return {
-            'flow_confidence': f"{s.flow_confidence:.3f}",
-            'net_buying': f"{s.net_aggressive_buying:.3f}",
-            'volume_imbalance': f"{s.volume_imbalance:.3f}",
-            'momentum': f"{s.overall_momentum:.3f}",
-            'adverse_risk': f"{s.adverse_selection_risk:.3f}",
-            'samples': s.sample_size
-        }

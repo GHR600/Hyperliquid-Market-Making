@@ -73,34 +73,51 @@ class OrderbookAnalyzer:
         print(f"📊 Orderbook Analyzer initialized")
     
     def update_baselines_from_learning(self, learning_stats: Dict):
-        """Update baselines from learning phase data"""
+        """Update baselines from learning phase data - FIXED VERSION"""
         print("📚 Updating analysis baselines from learning phase...")
         
-        if learning_stats.get('spreads'):
-            spreads = np.array(learning_stats['spreads'])
-            self.baseline_spread = {
-                'mean': np.mean(spreads),
-                'std': np.std(spreads),
-                'percentiles': {
-                    '25': np.percentile(spreads, 25),
-                    '50': np.percentile(spreads, 50),
-                    '75': np.percentile(spreads, 75),
-                    '90': np.percentile(spreads, 90),
-                    '95': np.percentile(spreads, 95)
+        try:
+            if learning_stats.get('spreads'):
+                spreads = np.array(learning_stats['spreads'])
+                self.baseline_spread = {
+                    'mean': float(np.mean(spreads)),
+                    'std': float(np.std(spreads)),
+                    'percentiles': {
+                        '25': float(np.percentile(spreads, 25)),
+                        '50': float(np.percentile(spreads, 50)),
+                        '75': float(np.percentile(spreads, 75)),
+                        '90': float(np.percentile(spreads, 90)),
+                        '95': float(np.percentile(spreads, 95))
+                    }
                 }
-            }
-            print(f"   📈 Baseline spread: {self.baseline_spread['mean']:.4f}% ± {self.baseline_spread['std']:.4f}%")
-        
-        if learning_stats.get('imbalances'):
-            imbalances = np.array(learning_stats['imbalances'])
-            self.baseline_imbalance_std = np.std(imbalances)
-            print(f"   ⚖️  Baseline imbalance volatility: {self.baseline_imbalance_std:.4f}")
-        
-        if learning_stats.get('mid_prices') and len(learning_stats['mid_prices']) > 1:
-            prices = np.array(learning_stats['mid_prices'])
-            price_changes = np.diff(prices) / prices[:-1]
-            self.baseline_volatility = np.std(price_changes)
-            print(f"   📊 Baseline price volatility: {self.baseline_volatility:.6f}")
+                print(f"   📈 Baseline spread: {self.baseline_spread['mean']:.4f}% ± {self.baseline_spread['std']:.4f}%")
+            
+            if learning_stats.get('imbalances'):
+                # Handle imbalances which might be a list of dicts
+                imbalances_list = learning_stats['imbalances']
+                if imbalances_list and len(imbalances_list) > 0:
+                    # Extract just the imbalance values
+                    if isinstance(imbalances_list[0], dict):
+                        imbalance_values = [item['imbalance'] for item in imbalances_list if 'imbalance' in item]
+                    else:
+                        imbalance_values = imbalances_list
+                    
+                    if imbalance_values:
+                        imbalances = np.array(imbalance_values)
+                        self.baseline_imbalance_std = float(np.std(imbalances))
+                        print(f"   ⚖️  Baseline imbalance volatility: {self.baseline_imbalance_std:.4f}")
+            
+            if learning_stats.get('mid_prices') and len(learning_stats['mid_prices']) > 1:
+                prices = np.array(learning_stats['mid_prices'])
+                price_changes = np.diff(prices) / prices[:-1]
+                self.baseline_volatility = float(np.std(price_changes))
+                print(f"   📊 Baseline price volatility: {self.baseline_volatility:.6f}")
+                
+        except Exception as e:
+            print(f"❌ Error updating baselines: {e}")
+            import traceback
+            traceback.print_exc()
+            self.logger.error(f"Error updating baselines: {e}")
     
     def analyze_orderbook(self, orderbook: Dict) -> Tuple[OrderbookImbalance, OrderbookGaps, LiquidityProfile, MarketCondition]:
         """Comprehensive orderbook analysis"""

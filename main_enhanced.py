@@ -13,6 +13,7 @@ from enhanced_strategy import EnhancedMarketMakingStrategy  # Use enhanced strat
 from trading_client import TradingClient
 from market_microstructure import MarketMicrostructure
 from websocket_manager import DataManagerWithWebSocket
+from enhanced_strategy_with_stoploss import EnhancedMarketMakingStrategyWithRisk
 
 class EnhancedHyperliquidMarketMaker:
     def __init__(self):
@@ -30,7 +31,7 @@ class EnhancedHyperliquidMarketMaker:
         print("   📈 Position tracker initialized")
         
         # Use enhanced strategy with orderbook analysis
-        self.strategy = EnhancedMarketMakingStrategy(self.config)
+        self.strategy = EnhancedMarketMakingStrategyWithRisk(self.config)
         print("   🎯 Enhanced strategy with orderbook analysis initialized")
         
         self.trading_client = TradingClient(self.config)
@@ -485,16 +486,56 @@ class EnhancedHyperliquidMarketMaker:
             return None
 
     async def execute_enhanced_trading_logic(self, orderbook: Dict):
-        """Execute enhanced trading logic - only after learning phase"""
+        """Execute enhanced trading logic with integrated risk management"""
         if self.learning_phase_active:
             # Skip trading during learning phase
             return
         
-        print("\n🎯 EXECUTING ENHANCED TRADING LOGIC")
-        print("-" * 50)
+        print("\n🎯 EXECUTING ENHANCED TRADING LOGIC WITH RISK MANAGEMENT")
+        print("-" * 60)
         
         try:
-            # Get microstructure signals
+            current_price = orderbook.get('mid_price', 0)
+            position = self.position_tracker.get_position(self.config.SYMBOL)
+            
+            # 1. IMMEDIATE RISK CHECKS (NEW!)
+            print("🛡️  Performing risk checks...")
+            
+            # Check for stop-loss trigger
+            if (position and 
+                hasattr(self.strategy, 'check_stop_loss_trigger') and 
+                self.strategy.check_stop_loss_trigger(position, current_price)):
+                
+                print("🛑 STOP-LOSS TRIGGERED - Generating emergency exit order")
+                stop_order = self.strategy.generate_stop_loss_order(position, current_price)
+                if stop_order:
+                    # Execute stop-loss immediately
+                    order_ids = await self.trading_client.place_orders([stop_order])
+                    if order_ids and order_ids[0]:
+                        print(f"✅ Stop-loss order placed: {order_ids[0]}")
+                        # Update position tracker to reflect closure
+                        self.position_tracker.positions[self.config.SYMBOL] = None
+                    else:
+                        print("❌ Failed to place stop-loss order!")
+                    return  # Skip normal trading logic
+            
+            # Check for profit-taking (NEW!)
+            if (position and 
+                hasattr(self.strategy, 'check_profit_taking_trigger')):
+                close_size = self.strategy.check_profit_taking_trigger(position, current_price)
+                if close_size:
+                    print("💰 PROFIT-TAKING TRIGGERED")
+                    profit_order = self.strategy.generate_profit_taking_order(position, current_price)
+                    if profit_order:
+                        order_ids = await self.trading_client.place_orders([profit_order])
+                        if order_ids and order_ids[0]:
+                            print(f"✅ Profit-taking order placed: {order_ids[0]}")
+                            # Reduce position size in tracker
+                            if position:
+                                position.size -= close_size if position.size > 0 else -close_size
+                    # Continue with normal logic after profit-taking
+            
+            # 2. GET MARKET ANALYSIS (existing code)
             print("🧠 Retrieving microstructure signals...")
             signals = self.microstructure.get_current_signals()
             signal_summary = self.microstructure.get_signal_summary()
@@ -504,96 +545,135 @@ class EnhancedHyperliquidMarketMaker:
             strategy_status = self.strategy.get_strategy_status(orderbook)
             print(f"📈 Enhanced strategy status:")
             print(f"   - Market condition: {strategy_status.get('condition_type', 'UNKNOWN')}")
-            print(f"   - Book stability: {strategy_status.get('book_stability', 0):.3f}")
             print(f"   - Adverse risk: {strategy_status.get('adverse_risk', 0):.3f}")
-            print(f"   - Imbalance ratio: {strategy_status.get('imbalance_ratio', 0):.3f}")
             
-            # Get current position and orders
-            position = self.position_tracker.get_position(self.config.SYMBOL)
+            # 3. DISPLAY RISK STATUS (NEW!)
+            if hasattr(self.strategy, 'get_risk_status'):
+                risk_status = self.strategy.get_risk_status(position, current_price)
+                if risk_status.get('no_position'):
+                    print("📊 Risk Status: FLAT POSITION")
+                else:
+                    print(f"🛡️  Risk Status:")
+                    
+                    # Safe formatting with null checks
+                    pos_size = risk_status.get('position_size', 0)
+                    entry_price = risk_status.get('entry_price', 0)
+                    unrealized_pnl = risk_status.get('unrealized_pnl', 0)
+                    stop_loss_price = risk_status.get('stop_loss_price', 0)
+                    profit_target_price = risk_status.get('profit_target_price', 0)
+                    stop_distance = risk_status.get('stop_loss_distance', 0)
+                    profit_levels_hit = risk_status.get('profit_levels_hit', [])
+                    
+                    print(f"   - Position: {pos_size:.4f}")
+                    if entry_price > 0:
+                        print(f"   - Entry: ${entry_price:.5f}")
+                    else:
+                        print(f"   - Entry: Not tracked")
+                        
+                    print(f"   - Unrealized PnL: ${unrealized_pnl:.2f}")
+                    
+                    if stop_loss_price > 0:
+                        print(f"   - Stop-loss: ${stop_loss_price:.5f}")
+                        print(f"   - Distance to stop: {stop_distance:.2f}%")
+                    else:
+                        print(f"   - Stop-loss: Not set")
+                        
+                    if profit_target_price > 0:
+                        print(f"   - Profit target: ${profit_target_price:.5f}")
+                    else:
+                        print(f"   - Profit target: Not set")
+                        
+                    if profit_levels_hit:
+                        print(f"   - Profit levels hit: {profit_levels_hit}")
+            
+            # 4. EXISTING TRADING LOGIC (mostly unchanged)
             current_orders = self.position_tracker.get_open_orders(self.config.SYMBOL)
-            
             print(f"📋 Current state: {len(current_orders)} open orders")
             if position:
                 print(f"📊 Position: {position.size:.4f} {self.config.SYMBOL}")
             else:
                 print("📊 No position")
             
-            # Calculate enhanced fair price
+            # Calculate fair price
             fair_price = self.strategy.calculate_fair_price(orderbook)
             if not fair_price:
-                print("❌ Cannot determine enhanced fair price - skipping trading logic")
+                print("❌ Cannot determine fair price - skipping trading logic")
                 return
             
-            # Enhanced order cancellation logic
+            # Enhanced order cancellation
             if current_orders and fair_price:
                 print("🔍 Enhanced order evaluation...")
                 orders_to_cancel = self.strategy.should_cancel_orders(current_orders, fair_price, signals)
                 
                 if orders_to_cancel:
-                    print(f"❌ Cancelling {len(orders_to_cancel)} orders (enhanced logic)...")
+                    print(f"❌ Cancelling {len(orders_to_cancel)} orders...")
                     success = await self.trading_client.cancel_orders(orders_to_cancel)
                     if success:
                         print("✅ Orders cancelled successfully")
-                        # Remove cancelled orders from tracking
                         for order_id in orders_to_cancel:
                             if order_id in self.position_tracker.open_orders:
                                 del self.position_tracker.open_orders[order_id]
-                                print(f"   📝 Removed order {order_id} from tracking")
                     else:
                         print("❌ Failed to cancel some orders")
-                else:
-                    print("✅ No orders need cancellation (enhanced analysis)")
             
-            # Enhanced order generation
+            # Generate new orders with risk management (UPDATED!)
             max_total_orders = self.config.MAX_ORDERS_PER_SIDE * 2
             current_order_count = len(current_orders)
             
             print(f"📊 Order capacity: {current_order_count}/{max_total_orders}")
             
             if current_order_count < max_total_orders:
-                print("🎯 Generating enhanced orders...")
+                print("🎯 Generating enhanced orders with risk management...")
                 account_value = self.position_tracker.get_account_value()
-                new_orders = self.strategy.generate_orders(orderbook, position, account_value, signals)
+                
+                # Use risk-aware order generation (NEW!)
+                if hasattr(self.strategy, 'generate_enhanced_orders_with_risk'):
+                    new_orders = self.strategy.generate_enhanced_orders_with_risk(
+                        orderbook, position, account_value, signals
+                    )
+                else:
+                    # Fallback to normal order generation
+                    new_orders = self.strategy.generate_orders(orderbook, position, account_value, signals)
                 
                 if new_orders:
-                    print(f"📦 Placing {len(new_orders)} enhanced orders...")
+                    print(f"📦 Placing {len(new_orders)} risk-managed orders...")
                     order_ids = await self.trading_client.place_orders(new_orders)
                     
                     # Track successful orders
                     successful_orders = 0
                     for i, order_id in enumerate(order_ids):
                         if order_id and i < len(new_orders):
-                            # Create order tracking object
                             order_data = {
                                 'oid': order_id,
                                 'coin': new_orders[i]['coin'],
                                 'side': 'B' if new_orders[i]['is_buy'] else 'A',
                                 'sz': str(new_orders[i]['sz']),
-                                'limitPx': str(new_orders[i]['limit_px'])
+                                'limitPx': str(new_orders[i].get('limit_px', 0))
                             }
                             order = Order(order_data)
                             self.position_tracker.open_orders[order_id] = order
                             successful_orders += 1
-                            print(f"   ✅ Tracking enhanced order: {order_id}")
+                            print(f"   ✅ Tracking risk-managed order: {order_id}")
                     
-                    print(f"📈 Successfully placed {successful_orders}/{len(new_orders)} enhanced orders")
+                    print(f"📈 Successfully placed {successful_orders}/{len(new_orders)} risk-managed orders")
                 else:
-                    print("⚠️  No enhanced orders generated (conditions unfavorable)")
+                    print("⚠️  No orders generated (risk management or unfavorable conditions)")
             else:
                 print("📊 Maximum orders reached - not generating new orders")
-                
+        
         except Exception as e:
-            print(f"❌ Error in enhanced trading logic: {e}")
-            self.logger.error(f"Error in enhanced trading logic: {e}")
+            print(f"❌ Error in enhanced trading logic with risk: {e}")
+            self.logger.error(f"Error in enhanced trading logic with risk: {e}")
+
 
     async def log_enhanced_status(self, fair_price: Optional[float]):
-        """Log enhanced trading status"""
+        """Enhanced status logging with risk metrics"""
         if self.learning_phase_active:
             self._log_learning_progress()
             return
         
-        print("\n📊 ENHANCED STATUS REPORT")
-        print("-" * 40)
+        print("\n📊 ENHANCED STATUS REPORT WITH RISK MANAGEMENT")
+        print("-" * 50)
         
         try:
             # Account and position info
@@ -625,28 +705,53 @@ class EnhancedHyperliquidMarketMaker:
             print(f"   - Adverse Risk: {signals.adverse_selection_risk:.3f}")
             print(f"   - Volume Imbalance: {signals.volume_imbalance:.3f}")
             
-            # Enhanced strategy analysis (if we have orderbook)
-            # This would require passing the current orderbook, simplified for now
-            print(f"📈 Enhanced Strategy:")
-            print(f"   - Analysis engine: ACTIVE")
-            print(f"   - Adverse selection protection: ENABLED")
-            print(f"   - Dynamic spread calculation: ACTIVE")
-            print(f"   - Orderbook gap detection: ENABLED")
+            # NEW: Risk-specific logging
+            current_price = fair_price or 0
+            if position and hasattr(self.strategy, 'get_risk_status') and current_price > 0:
+                risk_status = self.strategy.get_risk_status(position, current_price)
+                
+                if not risk_status.get('no_position'):
+                    print(f"🛡️  Risk Management Status:")
+                    
+                    # Safe extraction with defaults
+                    stop_distance = risk_status.get('stop_loss_distance', 0)
+                    profit_distance = risk_status.get('profit_target_distance', 0)
+                    
+                    print(f"   - Stop-Loss Distance: {stop_distance:.2f}%")
+                    print(f"   - Profit Target Distance: {profit_distance:.2f}%")
+                    
+                    profit_skew = 0
+                    if hasattr(self.strategy, 'calculate_profit_skew'):
+                        try:
+                            profit_skew = self.strategy.calculate_profit_skew(position, current_price)
+                            print(f"   - Current Profit Skew: {profit_skew*100:.3f}%")
+                        except:
+                            print(f"   - Current Profit Skew: 0.000%")
+                    
+                    # Risk level assessment
+                    stop_distance_abs = abs(stop_distance)
+                    if stop_distance_abs < 0.5:
+                        print(f"   - Risk Level: 🔴 HIGH (near stop-loss)")
+                    elif stop_distance_abs < 1.0:
+                        print(f"   - Risk Level: 🟡 MEDIUM")
+                    else:
+                        print(f"   - Risk Level: 🟢 LOW")
             
             # Time since trading started
-            if self.trading_start_time:
+            if hasattr(self, 'trading_start_time') and self.trading_start_time:
                 trading_duration = time.time() - self.trading_start_time
                 print(f"⏰ Trading Duration: {trading_duration/60:.1f} minutes")
             
             # Log to main logger as well
             if position:
-                self.logger.info(f"Enhanced: ${account_value:.0f} | Position: {position.size:.4f} ({position_pct:.1f}%) | PnL: ${pnl:.2f} | Orders: {len(current_orders)} | Fair: ${fair_price:.5f}")
+                self.logger.info(f"Enhanced+Risk: ${account_value:.0f} | Position: {position.size:.4f} ({position_pct:.1f}%) | PnL: ${pnl:.2f} | Orders: {len(current_orders)} | Fair: ${fair_price:.5f}")
             else:
-                self.logger.info(f"Enhanced: ${account_value:.0f} | No position | Orders: {len(current_orders)} | Fair: ${fair_price:.5f}")
+                self.logger.info(f"Enhanced+Risk: ${account_value:.0f} | No position | Orders: {len(current_orders)} | Fair: ${fair_price:.5f}")
                 
         except Exception as e:
             print(f"❌ Error logging enhanced status: {e}")
             self.logger.error(f"Error logging enhanced status: {e}")
+
 
     async def enhanced_trading_loop(self):
         """Enhanced trading loop with learning phase and orderbook analysis"""

@@ -45,8 +45,10 @@ class TradingClient:
             self.user_address = None
             self.logger.warning("No private key provided - trading disabled")
     
+    # In your trading_client.py, UPDATE the place_orders method:
+
     async def place_orders(self, orders: List[Dict]) -> List[Optional[str]]:
-        """Place multiple orders with detailed logging"""
+        """Place multiple orders with detailed logging - FIXED for market orders"""
         print(f"\n📦 PLACING {len(orders)} ORDERS")
         print("-" * 30)
         
@@ -57,7 +59,20 @@ class TradingClient:
                 paper_id = f"paper_order_{i}_{asyncio.get_event_loop().time()}"
                 paper_order_ids.append(paper_id)
                 side_text = "BUY" if order['is_buy'] else "SELL"
-                print(f"   📄 Paper order {i+1}: {side_text} {order['sz']:.2f} @ ${order['limit_px']:.5f} -> ID: {paper_id}")
+                
+                # Handle both market and limit orders for display
+                if 'limit_px' in order:
+                    price_display = f"@ ${order['limit_px']:.5f}"
+                else:
+                    price_display = "@ MARKET"
+                
+                order_type = order.get('order_type', {})
+                if 'market' in order_type:
+                    type_display = "MARKET"
+                else:
+                    type_display = "LIMIT"
+                    
+                print(f"   📄 Paper order {i+1}: {side_text} {order['sz']:.2f} {price_display} ({type_display}) -> ID: {paper_id}")
             
             self.logger.info(f"Paper trading: Would place {len(orders)} orders")
             return paper_order_ids
@@ -70,19 +85,50 @@ class TradingClient:
             for i, order in enumerate(orders):
                 print(f"\n   📋 Order {i+1}/{len(orders)}:")
                 side_text = "BUY" if order['is_buy'] else "SELL"
-                print(f"      {side_text} {order['sz']:.2f} {order['coin']} @ ${order['limit_px']:.5f}")
+                
+                # Handle display for different order types
+                if 'limit_px' in order:
+                    price_display = f"@ ${order['limit_px']:.5f}"
+                    order_price = order['limit_px']
+                else:
+                    price_display = "@ MARKET"
+                    order_price = None  # Will be handled by exchange
+                
+                order_type = order.get('order_type', {})
+                if 'market' in order_type:
+                    type_display = "MARKET"
+                else:
+                    type_display = "LIMIT"
+                
+                reduce_only = order.get('reduce_only', False)
+                reduce_text = " (REDUCE-ONLY)" if reduce_only else ""
+                
+                print(f"      {side_text} {order['sz']:.2f} {order['coin']} {price_display} ({type_display}){reduce_text}")
                 
                 try:
-                    # Use the correct exchange.order() method signature
                     print(f"      🔄 Submitting to exchange...")
-                    response = self.exchange.order(
-                        self.config.SYMBOL,           # asset symbol as first parameter
-                        order['is_buy'],              # True for buy, False for sell
-                        order['sz'],                  # size as float
-                        order['limit_px'],            # price as float
-                        order['order_type'],          # order type dict
-                        reduce_only=order.get('reduce_only', False)
-                    )
+                    
+                    # Handle market vs limit orders differently
+                    if 'market' in order_type:
+                        # For market orders, don't pass limit_px
+                        response = self.exchange.order(
+                            self.config.SYMBOL,           # asset symbol
+                            order['is_buy'],              # True for buy, False for sell
+                            order['sz'],                  # size as float
+                            None,                         # No price for market orders
+                            order['order_type'],          # order type dict
+                            reduce_only=order.get('reduce_only', False)
+                        )
+                    else:
+                        # For limit orders, pass the limit price
+                        response = self.exchange.order(
+                            self.config.SYMBOL,           # asset symbol
+                            order['is_buy'],              # True for buy, False for sell
+                            order['sz'],                  # size as float
+                            order_price,                  # price as float
+                            order['order_type'],          # order type dict
+                            reduce_only=order.get('reduce_only', False)
+                        )
                     
                     print(f"      📡 Response received: {response}")
                     
@@ -97,10 +143,18 @@ class TradingClient:
                                 print(f"      ✅ Order placed successfully!")
                                 print(f"         Order ID: {order_id}")
                                 self.logger.info(f"Order {i+1} placed successfully: {order_id}")
+                            elif 'filled' in status:
+                                # Market order was filled immediately
+                                fill_data = status['filled']
+                                order_ids.append(f"filled_{i}")  # Synthetic ID for filled orders
+                                print(f"      ✅ Market order filled immediately!")
+                                print(f"         Fill price: ${fill_data.get('avgPx', 'N/A')}")
+                                print(f"         Fill size: {fill_data.get('totalSz', 'N/A')}")
+                                self.logger.info(f"Market order {i+1} filled immediately")
                             else:
                                 order_ids.append(None)
-                                print(f"      ⚠️  Order not resting: {status}")
-                                self.logger.warning(f"Order {i+1} not resting: {status}")
+                                print(f"      ⚠️  Order status unclear: {status}")
+                                self.logger.warning(f"Order {i+1} status unclear: {status}")
                         else:
                             order_ids.append(None)
                             print(f"      ❌ No status in response")
@@ -129,8 +183,8 @@ class TradingClient:
             return [None] * len(orders)
     
     async def cancel_orders(self, order_ids: List[str]) -> bool:
-        """Cancel orders one by one using single order cancel"""
-        print(f"\n❌ CANCELLING {len(order_ids)} ORDERS (ONE BY ONE)")
+        """Cancel orders one by one using correct Hyperliquid SDK format"""
+        print(f"\n❌ CANCELLING {len(order_ids)} ORDERS")
         print("-" * 30)
         
         if not self.exchange or not self.config.ENABLE_TRADING:
@@ -153,7 +207,7 @@ class TradingClient:
             try:
                 print(f"   🔄 Cancelling order {i+1}/{len(order_ids)}: {order_id}")
                 
-                # Convert order_id to int if it's a string (common Hyperliquid requirement)
+                # Convert order_id to int if it's a string
                 try:
                     oid_param = int(order_id)
                     print(f"      Using integer oid: {oid_param}")
@@ -161,8 +215,9 @@ class TradingClient:
                     oid_param = order_id
                     print(f"      Using string oid: {oid_param}")
                 
-                # Call exchange.cancel() with single oid parameter
-                response = self.exchange.cancel(oid=oid_param)
+                # CORRECT FORMAT: exchange.cancel(coin, oid)
+                # The Hyperliquid SDK requires both coin name and order ID
+                response = self.exchange.cancel(self.config.SYMBOL, oid_param)
                 
                 print(f"      📡 Response: {response}")
                 
@@ -181,19 +236,21 @@ class TradingClient:
                 print(f"      ❌ Exception cancelling order {order_id}: {e}")
                 self.logger.error(f"Exception cancelling order {order_id}: {e}")
                 
-                # Try alternative format as fallback
+                # Try alternative formats as fallback
                 try:
-                    print(f"      🔄 Trying alternative format for {order_id}...")
-                    # Some SDKs expect exchange.cancel(coin, oid)
-                    alt_response = self.exchange.cancel(self.config.SYMBOL, order_id)
-                    
-                    if alt_response and alt_response.get('status') == 'ok':
-                        successful_cancels += 1
-                        failed_cancels -= 1  # Correct the count
-                        print(f"      ✅ Order {order_id} cancelled with alternative method")
+                    print(f"      🔄 Trying cancel_by_cloid for {order_id}...")
+                    # Some SDKs have alternative cancel methods
+                    if hasattr(self.exchange, 'cancel_by_cloid'):
+                        alt_response = self.exchange.cancel_by_cloid(self.config.SYMBOL, order_id)
+                        if alt_response and alt_response.get('status') == 'ok':
+                            successful_cancels += 1
+                            failed_cancels -= 1  # Correct the count
+                            print(f"      ✅ Order {order_id} cancelled with alternative method")
+                        else:
+                            print(f"      ❌ Alternative method also failed for {order_id}")
                     else:
-                        print(f"      ❌ Alternative method also failed for {order_id}")
-                        
+                        print(f"      ❌ No alternative cancel method available")
+                            
                 except Exception as alt_error:
                     print(f"      ❌ Alternative method exception: {alt_error}")
         
