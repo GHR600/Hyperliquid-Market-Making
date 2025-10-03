@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(git filter-repo:*)",
+      "Bash(where git-filter-repo)",
+      "Bash(git filter-branch:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nSecurity: Remove hardcoded API keys and use environment variables\n\n- Move PRIVATE_KEY and wallet addresses to .env file\n- Add .gitignore to prevent committing secrets\n- Add python-dotenv for environment variable management\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(set FILTER_BRANCH_SQUELCH_WARNING=1)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd config.py with environment variable support\n\nConfig now reads sensitive data from .env file\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git commit:*)",
+      "Bash(git reflog:*)",
+      "Bash(git gc:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
