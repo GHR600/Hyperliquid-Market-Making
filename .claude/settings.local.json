@@ -12,7 +12,10 @@
       "Bash(git commit:*)",
       "Bash(git reflog:*)",
       "Bash(git gc:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(python test_connection.py:*)",
+      "Bash($env:PYTHONIOENCODING='utf-8')",
+      "Bash(chcp:*)"
     ],
     "deny": [],
     "ask": []
