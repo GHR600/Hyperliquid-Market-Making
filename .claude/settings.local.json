@@ -11,7 +11,8 @@
       "Bash(git commit -m \"$(cat <<''EOF''\nAdd config.py with environment variable support\n\nConfig now reads sensitive data from .env file\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
       "Bash(git commit:*)",
       "Bash(git reflog:*)",
-      "Bash(git gc:*)"
+      "Bash(git gc:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
