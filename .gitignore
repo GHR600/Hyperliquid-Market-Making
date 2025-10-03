@@ -1,8 +1,9 @@
 # API Keys and Secrets
-config.py
+# Note: config.py is now safe to commit (uses environment variables)
 *.env
 .env
 .env.*
+!.env.example
 *.secret
 secrets.json
 credentials.json
