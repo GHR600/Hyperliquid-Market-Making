@@ -15,7 +15,11 @@
       "Bash(git push:*)",
       "Bash(python test_connection.py:*)",
       "Bash($env:PYTHONIOENCODING='utf-8')",
-      "Bash(chcp:*)"
+      "Bash(chcp:*)",
+      "Bash(git rm:*)",
+      "Bash(git mv:*)",
+      "Bash(mkdir:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

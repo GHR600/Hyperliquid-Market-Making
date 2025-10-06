@@ -1,582 +1,435 @@
+# enhanced_strategy_with_stoploss.py - Add to your enhanced_strategy.py
+
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional
+import time
+import logging
+import numpy as np
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional
+import time
+from config import TradingConfig
+from core.position_tracker import Position, Order
+from analysis.market_microstructure import MarketSignals
+from analysis.orderbook_analyzer import OrderbookAnalyzer, OrderbookImbalance, OrderbookGaps, LiquidityProfile, MarketCondition, AdverseSelectionRisk
+
+# Import base strategy classes inline to avoid circular dependency
 import logging
 from typing import Dict, List, Tuple, Optional
-from config import TradingConfig
-from position_tracker import Position, Order
-from market_microstructure import MarketSignals
 
-class MarketMakingStrategy:
+# Base Enhanced Strategy Class (consolidated from enhanced_strategy.py)
+class EnhancedMarketMakingStrategy:
     def __init__(self, config: TradingConfig):
         self.config = config
         self.logger = logging.getLogger(__name__)
-        
-        print(f"🎯 Initialized MarketMakingStrategy")
+
+        # Initialize orderbook analyzer
+        self.orderbook_analyzer = OrderbookAnalyzer(config)
+
+        # Track our fills for adverse selection analysis
+        self.recent_fills = []
+
+        print(f"🎯 Enhanced MarketMaking Strategy initialized")
         print(f"   - Base spread: {config.BASE_SPREAD * 100:.2f}%")
         print(f"   - Order size: {'percentage-based' if config.USE_PERCENTAGE_SIZING else 'fixed'}")
         print(f"   - Max orders per side: {config.MAX_ORDERS_PER_SIDE}")
-        
+        print(f"   - Orderbook-based decision making: ENABLED")
+
+    def update_baselines_from_learning(self, learning_stats: Dict):
+        """Update strategy baselines from learning phase"""
+        print("🎓 Strategy: Updating baselines from learning phase...")
+        self.orderbook_analyzer.update_baselines_from_learning(learning_stats)
+
     def calculate_fair_price(self, orderbook: Dict) -> Optional[float]:
-        """Calculate fair price from orderbook"""
-        print("💰 Calculating fair price...")
-        
-        bids = orderbook.get('bids', [])
-        asks = orderbook.get('asks', [])
-        
-        if not bids or not asks:
-            print("⚠️  Cannot calculate fair price - missing bids or asks")
+        """Calculate sophisticated fair price using orderbook analysis"""
+        imbalance, gaps, liquidity, condition = self.orderbook_analyzer.analyze_orderbook(orderbook)
+        if imbalance.weighted_mid == 0:
             return None
-            
-        best_bid = bids[0][0]
-        best_ask = asks[0][0]
-        
-        # Simple mid-price calculation
-        fair_price = round(((best_bid + best_ask) / 2), 5)
-        
-        print(f"   📊 Fair price: ${fair_price:.5f} (bid: ${best_bid:.5f}, ask: ${best_ask:.5f})")
-        return fair_price
-    
+        return self.orderbook_analyzer.calculate_smart_fair_price(orderbook, imbalance)
+
     def should_place_orders(self, position: Optional[Position], orderbook: Dict, signals: Optional[MarketSignals] = None) -> bool:
-        """Determine if we should place new orders"""
-        print("🤔 Evaluating whether to place orders...")
-        
-        if not orderbook.get('bids') or not orderbook.get('asks'):
-            print("❌ No orderbook data - skipping order placement")
+        """Enhanced order placement decision using orderbook analysis"""
+        imbalance, gaps, liquidity, condition = self.orderbook_analyzer.analyze_orderbook(orderbook)
+        adverse_risk = self.orderbook_analyzer.calculate_adverse_selection_risk(orderbook, self.recent_fills)
+
+        if not self.orderbook_analyzer.should_place_orders(condition, adverse_risk):
             return False
-            
-        # Check spread is reasonable
-        best_bid = orderbook['bids'][0][0]
-        best_ask = orderbook['asks'][0][0]
-        spread = (best_ask - best_bid) / best_bid
-        
-        if spread > self.config.BASE_SPREAD * 1500:  # Don't trade in very wide markets
-            print(f"❌ Spread too wide: {spread:.4f} (>{self.config.BASE_SPREAD * 15:.4f}) - skipping")
-            self.logger.warning(f"Spread too wide: {spread:.4f}")
-            return False
-            
-        # Don't trade if position is too large
+
         if position and abs(position.size) >= self.config.MAX_POSITION_PCT:
-            print(f"❌ Position too large: {position.size} (max: {self.config.MAX_POSITION_PCT}) - skipping")
-            self.logger.warning(f"Position too large: {position.size}")
             return False
-        
-        # Check microstructure signals for adverse conditions
+
         if signals and signals.adverse_selection_risk > self.config.ADVERSE_SELECTION_THRESHOLD:
-            print(f"❌ High adverse selection risk: {signals.adverse_selection_risk:.3f} - skipping")
             return False
-            
-        print("✅ Conditions favorable for order placement")
+
         return True
-    
-    def calculate_order_prices(self, fair_price: float, position: Optional[Position], signals: Optional[MarketSignals] = None, tick_size: float = 0.5) -> Tuple[float, float]:
-        """Calculate bid and ask prices for orders with microstructure adjustments"""
-        print("📈 Calculating order prices...")
-        
+
+    def calculate_order_prices(self, fair_price: float, orderbook: Dict, position: Optional[Position],
+                              signals: Optional[MarketSignals] = None) -> Tuple[float, float]:
+        """Calculate order prices using orderbook analysis"""
+        imbalance, gaps, liquidity, condition = self.orderbook_analyzer.analyze_orderbook(orderbook)
+        adverse_risk = self.orderbook_analyzer.calculate_adverse_selection_risk(orderbook, self.recent_fills)
+
         base_spread = self.config.BASE_SPREAD
-        print(f"   Base spread: {base_spread * 100:.3f}%")
-        
-        # Adjust spread based on microstructure signals
         spread_multiplier = 1.0
-        
-        if signals:
-            # Widen spreads during high volatility or uncertain conditions
-            if signals.spread_volatility > 0.1:  # High spread volatility
-                spread_multiplier *= 1.2
-                print(f"   📊 High spread volatility detected - widening spreads by 20%")
-            
-            # Adjust based on flow confidence
-            if signals.flow_confidence < 0.3:  # Low confidence
-                spread_multiplier *= 1.3
-                print(f"   🤷 Low flow confidence - widening spreads by 30%")
-            elif signals.flow_confidence > 0.8:  # High confidence
-                spread_multiplier *= 0.9
-                print(f"   💪 High flow confidence - tightening spreads by 10%")
-            
-            # Adjust for order flow imbalance
-            if abs(signals.volume_imbalance) > 0.5:
-                if signals.volume_imbalance > 0:  # More bid volume
-                    print(f"   📊 Strong bid pressure detected - adjusting ask spread")
-                else:  # More ask volume
-                    print(f"   📊 Strong ask pressure detected - adjusting bid spread")
-        
+
+        if condition.condition_type == "CALM":
+            spread_multiplier *= 0.8
+        elif condition.condition_type == "VOLATILE":
+            spread_multiplier *= 1.5
+
         adjusted_spread = base_spread * spread_multiplier
-        print(f"   Adjusted spread: {adjusted_spread * 100:.3f}% (multiplier: {spread_multiplier:.2f})")
-        
-        # Adjust spread based on position (inventory risk)
-        position_skew = 0.0
-        if position and position.size != 0:
-            # Skew prices away from our position to encourage rebalancing
-            position_ratio = position.size / self.config.MAX_POSITION_PCT
-            position_skew = position_ratio * adjusted_spread * 0.5
-            print(f"   🎯 Position skew: {position_skew * 100:.3f}% (position: {position.size:.4f})")
-        
-        # Apply flow-based skewing
-        flow_skew = 0.0
-        if signals and hasattr(self.config, 'FLOW_CONFIDENCE_THRESHOLD') and signals.flow_confidence > self.config.FLOW_CONFIDENCE_THRESHOLD:
-            flow_direction = signals.overall_momentum
-            if hasattr(self.config, 'SPREAD_ADJUSTMENT_MULTIPLIER'):
-                flow_skew = flow_direction * adjusted_spread * self.config.SPREAD_ADJUSTMENT_MULTIPLIER
-    
-        total_skew = position_skew + flow_skew
-        
-        # Calculate bid and ask prices
-        raw_bid_price = fair_price * (1 - adjusted_spread / 2 - total_skew)
-        raw_ask_price = fair_price * (1 + adjusted_spread / 2 - total_skew)
-        
-        # Round to appropriate decimals
-        bid_price = self._round_price_to_decimals(raw_bid_price, tick_size)
-        ask_price = self._round_price_to_decimals(raw_ask_price, tick_size)
-            
-        print(f"   💵 Final prices: bid=${bid_price:.5f}, ask=${ask_price:.5f}")
-        print(f"   📏 Effective spread: {((ask_price - bid_price) / fair_price * 100):.3f}%")
+        bid_spread = adjusted_spread / 2
+        ask_spread = adjusted_spread / 2
 
-        return bid_price, ask_price
- 
-        
-    def _round_size_to_decimals(self, size: float) -> float:
-        """Round size down to the appropriate number of decimals for the symbol"""
-        if size <= 0:
-            return 0.0
-        
-        # Round down using floor division approach
-        rounded_size = round(size, self.config.SIZE_DECIMALS)
-        
-        print(f"      📏 Size rounding: {size:.6f} -> {rounded_size:.{self.config.SIZE_DECIMALS}f} ({self.config.SIZE_DECIMALS} decimals)")
-        return rounded_size
-    
-    def _round_price_to_decimals(self, price: float, tick_size: float = 0.5) -> float:
-        """Round price to valid tick increments for the symbol"""
-        if price <= 0:
-            return 0.0
+        bid_price = fair_price * (1 - bid_spread)
+        ask_price = fair_price * (1 + ask_spread)
 
-        # Round to nearest tick
-        rounded_price = round(price / tick_size) * tick_size
-        
-        # Ensure we don't exceed the decimal precision rules
-        max_decimals = self.config.PRICE_DECIMALS
-        final_price = round(rounded_price, max_decimals)
-        
-        print(f"      💰 Price rounding: {price:.5f} -> tick_rounded: {rounded_price:.5f} -> final: {final_price:.{max_decimals}f}")
-        return final_price
-    
-    def calculate_order_sizes(self, position: Optional[Position], current_price: float, account_value: float, signals: Optional[MarketSignals] = None) -> Tuple[float, float]:
-        """Calculate order sizes with microstructure-based adjustments"""
-        print("📊 Calculating order sizes...")
-        
-        try:
-            # Determine base size and max position based on configuration
-            if self.config.USE_PERCENTAGE_SIZING:
-                if account_value <= self.config.MIN_ACCOUNT_VALUE:
-                    print(f"❌ Account value too low: ${account_value:.2f} (min: ${self.config.MIN_ACCOUNT_VALUE})")
-                    self.logger.warning(f"Account value too low: ${account_value:.2f}")
-                    return 0.0, 0.0
-                
-                # Calculate sizes based on percentage of account value
-                dollar_amount = account_value * self.config.ORDER_SIZE_PCT / 100
-                base_size = dollar_amount / current_price
-                
-                max_position_dollar = account_value * self.config.MAX_POSITION_PCT / 100
-                max_position = max_position_dollar / current_price
-                
-                print(f"   💰 Percentage sizing: {self.config.ORDER_SIZE_PCT}% = ${dollar_amount:.2f} = {base_size:.4f} {self.config.SYMBOL}")
-            else:
-                # Use fixed sizing
-                base_size = getattr(self.config, 'ORDER_SIZE', 1.0)  # Fallback if not defined
-                max_position = self.config.MAX_POSITION_PCT
-                print(f"   📏 Fixed sizing: {base_size:.4f} {self.config.SYMBOL}")
-            
-            # Apply microstructure-based size adjustments
-            size_multiplier = 1.0
-            
-            if signals:
-                # Increase size when flow is strongly in our favor
-                if hasattr(self.config, 'FLOW_CONFIDENCE_THRESHOLD') and signals.flow_confidence > self.config.FLOW_CONFIDENCE_THRESHOLD:
-                    current_position = position.size if position else 0.0
-                    
-                    # If flow aligns with reducing our position, increase size
-                    if (current_position > 0 and signals.overall_momentum < -0.5) or \
-                       (current_position < 0 and signals.overall_momentum > 0.5):
-                        if hasattr(self.config, 'FLOW_POSITION_MULTIPLIER'):
-                            size_multiplier = self.config.FLOW_POSITION_MULTIPLIER
-                            print(f"   🎯 Flow aligns with position reduction - increasing size by {size_multiplier}x")
-                        else:
-                            size_multiplier = 2.0  # Default fallback
-                            print(f"   🎯 Flow aligns with position reduction - using default 2x multiplier")
-                    
-                    # If flow supports our market making direction, moderate increase
-                    elif abs(signals.overall_momentum) < 0.3:  # Sideways/ranging market
-                        size_multiplier = 1.2
-                        print(f"   📈 Favorable ranging conditions - increasing size by 20%")
-                
-                # Reduce size in adverse conditions
-                if signals.adverse_selection_risk > 0.6:
-                    if hasattr(self.config, 'ADVERSE_FLOW_REDUCTION'):
-                        reduction_factor = self.config.ADVERSE_FLOW_REDUCTION
-                    else:
-                        reduction_factor = 0.5  # Default fallback
-                    size_multiplier *= reduction_factor
-                    print(f"   ⚠️  High adverse selection risk - reducing size by {(1-reduction_factor)*100:.0f}%")
-                
-                # Adjust based on trade velocity (high velocity = more risk)
-                if signals.trade_velocity > 2.0:  # More than 2 trades/second
-                    size_multiplier *= 0.8
-                    print(f"   ⚡ High trade velocity - reducing size by 20%")
-            
-            adjusted_base_size = base_size * size_multiplier
-            print(f"   📊 Adjusted base size: {adjusted_base_size:.4f} (multiplier: {size_multiplier:.2f})")
-            
-            # Apply minimum size constraint
-            adjusted_base_size = max(adjusted_base_size, self.config.MIN_ORDER_SIZE)
-            
-            # Reduce size if we're approaching position limits
-            current_position = position.size if position else 0.0
-            
-            # Calculate how much we can buy/sell without exceeding limits
-            max_buy = max_position - current_position
-            max_sell = current_position + max_position
+        tick_size = orderbook.get('tick_size', 0.5)
+        bid_price = round(bid_price / tick_size) * tick_size
+        ask_price = round(ask_price / tick_size) * tick_size
 
-            # Apply size rounding BEFORE final size calculation
-            raw_bid_size = min(adjusted_base_size, max_buy) if max_buy > self.config.MIN_ORDER_SIZE else 0
-            raw_ask_size = min(adjusted_base_size, max_sell) if max_sell > self.config.MIN_ORDER_SIZE else 0
-            
-            # Round sizes to appropriate decimals
-            bid_size = self._round_size_to_decimals(raw_bid_size)
-            ask_size = self._round_size_to_decimals(raw_ask_size)
-            
-            # Final check after rounding - ensure minimum size requirements
-            if bid_size < self.config.MIN_ORDER_SIZE:
-                bid_size = 0.0
-                print(f"      ❌ Bid size too small after rounding: {bid_size}")
-            
-            if ask_size < self.config.MIN_ORDER_SIZE:
-                ask_size = 0.0
-                print(f"      ❌ Ask size too small after rounding: {ask_size}")
+        return round(bid_price, self.config.PRICE_DECIMALS), round(ask_price, self.config.PRICE_DECIMALS)
 
-            print(f"   📋 Final sizes: bid={bid_size:.{self.config.SIZE_DECIMALS}f}, ask={ask_size:.{self.config.SIZE_DECIMALS}f}")
-            print(f"   📊 Position limits: current={current_position:.4f}, max_buy={max_buy:.4f}, max_sell={max_sell:.4f}")
-
-            if self.config.USE_PERCENTAGE_SIZING:
-                max_position_dollar = account_value * self.config.MAX_POSITION_PCT / 100
-                max_position = max_position_dollar / current_price
-                
-                print(f"   🔍 POSITION DEBUG:")
-                print(f"       Account value: ${account_value:.2f}")
-                print(f"       MAX_POSITION_PCT: {self.config.MAX_POSITION_PCT}%")
-                print(f"       Max position dollar: ${max_position_dollar:.2f}")
-                print(f"       Current price: ${current_price:.2f}")
-                print(f"       Max position BTC: {max_position:.8f}")
-
-            max_buy = max_position - current_position
-            max_sell = current_position + max_position
-            
-            print(f"   🔍 DEBUG: adjusted_base_size = {adjusted_base_size:.8f}")
-            print(f"   🔍 DEBUG: max_buy = {max_buy:.8f}")
-            print(f"   🔍 DEBUG: max_sell = {max_sell:.8f}")
-            print(f"   🔍 DEBUG: self.config.MIN_ORDER_SIZE = {self.config.MIN_ORDER_SIZE}")
-
-            # Apply size rounding BEFORE final size calculation
-            raw_bid_size = min(adjusted_base_size, max_buy) if max_buy > self.config.MIN_ORDER_SIZE else 0
-            raw_ask_size = min(adjusted_base_size, max_sell) if max_sell > self.config.MIN_ORDER_SIZE else 0
-            
-            print(f"   🔍 DEBUG: raw_bid_size = {raw_bid_size:.8f}")
-            print(f"   🔍 DEBUG: raw_ask_size = {raw_ask_size:.8f}")
-            
-            # Round sizes to appropriate decimals
-            bid_size = self._round_size_to_decimals(raw_bid_size)
-            ask_size = self._round_size_to_decimals(raw_ask_size)
-            
-            print(f"   🔍 DEBUG: final bid_size = {bid_size:.8f}")
-            print(f"   🔍 DEBUG: final ask_size = {ask_size:.8f}")
-            
-            return bid_size, ask_size
-            
-        except Exception as e:
-            print(f"❌ Error calculating order sizes: {e}")
-            import traceback
-            traceback.print_exc()
-            # Return safe defaults
-            return 0.0, 0.0
-    
-    def generate_orders(self, orderbook: Dict, position: Optional[Position], account_value: float, signals: Optional[MarketSignals] = None) -> List[Dict]:
-
-        """Generate Hyperliquid-compatible order specifications with microstructure integration"""
-        print("🎯 Generating orders...")
+    def generate_orders(self, orderbook: Dict, position: Optional[Position], account_value: float,
+                       signals: Optional[MarketSignals] = None) -> List[Dict]:
+        """Generate orders using enhanced orderbook analysis"""
         orders = []
-        
-        tick_size = orderbook.get('tick_size', 0.5)  # Add this
 
-        try:
-            if not self.should_place_orders(position, orderbook, signals):
-                print("❌ Conditions not favorable - no orders generated")
-                return orders
-                
-            fair_price = self.calculate_fair_price(orderbook)
-            if not fair_price:
-                print("❌ Cannot determine fair price - no orders generated")
-                return orders
-            
-            print("📈 Calculating order parameters...")
-            
-            # Calculate order prices - this should return a tuple
-            price_result = self.calculate_order_prices(fair_price, position, signals, tick_size)
-            print(f"   🔍 Price result type: {type(price_result)}, value: {price_result}")
-            
-            if price_result is None:
-                print("❌ Price result is None - no orders generated")
-                return orders
-            
-            if not isinstance(price_result, (tuple, list)) or len(price_result) != 2:
-                print(f"❌ Invalid price result format: {price_result} - no orders generated")
-                return orders
-                
-            bid_price, ask_price = price_result
-            print(f"   ✅ Prices unpacked: bid=${bid_price:.5f}, ask=${ask_price:.5f}")
-            
-            # Calculate order sizes - this should return a tuple  
-            size_result = self.calculate_order_sizes(position, fair_price, account_value, signals)
-            print(f"   🔍 Size result type: {type(size_result)}, value: {size_result}")
-            
-            if size_result is None:
-                print("❌ Size result is None - no orders generated")
-                return orders
-                
-            if not isinstance(size_result, (tuple, list)) or len(size_result) != 2:
-                print(f"❌ Invalid size result format: {size_result} - no orders generated")
-                return orders
-                
-            bid_size, ask_size = size_result
-            print(f"   ✅ Sizes unpacked: bid={bid_size:.4f}, ask={ask_size:.4f}")
-            
-            print(f"📊 Order parameters calculated successfully:")
-            print(f"   💵 Prices: bid=${bid_price:.5f}, ask=${ask_price:.5f}")
-            print(f"   📏 Sizes: bid={bid_size:.{self.config.SIZE_DECIMALS}f}, ask={ask_size:.{self.config.SIZE_DECIMALS}f}")
-            
-            # Create bid order (Hyperliquid format)
-            if bid_size > 0:
-                bid_order = {
-                    'coin': self.config.SYMBOL,
-                    'is_buy': True,
-                    'sz': bid_size,
-                    'limit_px': bid_price,
-                    'order_type': {'limit': {'tif': self.config.TIME_IN_FORCE}},
-                    'reduce_only': False
-                }
-                orders.append(bid_order)
-                print(f"   ✅ Generated BID order: {bid_size:.{self.config.SIZE_DECIMALS}f} @ ${bid_price:.5f}")
-            else:
-                print(f"   ❌ Skipping BID order: size too small ({bid_size:.{self.config.SIZE_DECIMALS}f})")
-            
-            # Create ask order (Hyperliquid format)
-            if ask_size > 0:
-                ask_order = {
-                    'coin': self.config.SYMBOL,
-                    'is_buy': False,
-                    'sz': ask_size,
-                    'limit_px': ask_price,
-                    'order_type': {'limit': {'tif': self.config.TIME_IN_FORCE}},
-                    'reduce_only': False
-                }
-                orders.append(ask_order)
-                print(f"   ✅ Generated ASK order: {ask_size:.{self.config.SIZE_DECIMALS}f} @ ${ask_price:.5f}")
-            else:
-                print(f"   ❌ Skipping ASK order: size too small ({ask_size:.{self.config.SIZE_DECIMALS}f})")
-            
-            print(f"📦 Generated {len(orders)} orders total")
+        if not self.should_place_orders(position, orderbook, signals):
             return orders
-            
-        except Exception as e:
-            print(f"❌ Error in generate_orders: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
-    
-    def should_cancel_orders(self, orders: List[Order], fair_price: float, signals: Optional[MarketSignals] = None) -> List[str]:
-        """Determine which orders should be cancelled with microstructure considerations"""
-        print("🔍 Evaluating orders for cancellation...")
-        to_cancel = []
-        
-        # Enhanced cancellation logic with microstructure signals
-        dynamic_threshold = self.config.REBALANCE_THRESHOLD
-        
-        if signals:
-            # Be more aggressive about cancelling when conditions change rapidly
-            if signals.order_velocity > 0.1:  # High order book activity
-                dynamic_threshold *= 0.7  # Tighter threshold
-                print(f"   ⚡ High orderbook activity - using tighter cancellation threshold: {dynamic_threshold:.4f}")
-            
-            # Cancel more aggressively when flow is strongly directional
-            if signals.flow_confidence > 0.8 and abs(signals.overall_momentum) > 0.6:
-                dynamic_threshold *= 0.8
-                print(f"   🌊 Strong directional flow - using tighter cancellation threshold: {dynamic_threshold:.4f}")
-        
-        for order in orders:
-            should_cancel = False
-            reason = ""
-            
-            # Traditional price-based cancellation
-            if order.side == 'buy' and order.price < fair_price * (1 - dynamic_threshold):
-                should_cancel = True
-                reason = f"bid too far below fair price ({order.price:.5f} vs {fair_price * (1 - dynamic_threshold):.5f})"
-            elif order.side == 'sell' and order.price > fair_price * (1 + dynamic_threshold):
-                should_cancel = True
-                reason = f"ask too far above fair price ({order.price:.5f} vs {fair_price * (1 + dynamic_threshold):.5f})"
-            
-            # Microstructure-based cancellation
-            if signals and not should_cancel:
-                # Cancel if we're on the wrong side of strong flow
-                if signals.flow_confidence > 0.8:
-                    if order.side == 'buy' and signals.overall_momentum < -0.7:
-                        should_cancel = True
-                        reason = "strong sell flow detected - cancelling bid"
-                    elif order.side == 'sell' and signals.overall_momentum > 0.7:
-                        should_cancel = True
-                        reason = "strong buy flow detected - cancelling ask"
-                
-                # Cancel during high adverse selection risk
-                if signals.adverse_selection_risk > self.config.ADVERSE_SELECTION_THRESHOLD:
-                    should_cancel = True
-                    reason = f"high adverse selection risk ({signals.adverse_selection_risk:.3f})"
-            
-            if should_cancel:
-                to_cancel.append(order.order_id)
-                print(f"   ❌ Cancelling order {order.order_id}: {reason}")
-        
-        if not to_cancel:
-            print("   ✅ No orders need cancellation")
+
+        fair_price = self.calculate_fair_price(orderbook)
+        if not fair_price:
+            return orders
+
+        bid_price, ask_price = self.calculate_order_prices(fair_price, orderbook, position, signals)
+
+        # Simple size calculation
+        if self.config.USE_PERCENTAGE_SIZING:
+            dollar_amount = account_value * self.config.ORDER_SIZE_PCT / 100
+            size = dollar_amount / fair_price
         else:
-            print(f"📝 Marked {len(to_cancel)} orders for cancellation")
-        
-        return to_cancel
-    
-    # 3. Add these optimized methods to your strategy.py
+            size = getattr(self.config, 'ORDER_SIZE', 1.0)
 
-def should_cancel_orders_fast(self, orders: List[Order], fair_price: float, signals: Optional[MarketSignals] = None, current_time: float = None) -> List[str]:
-    """Fast order cancellation with aggressive thresholds"""
-    print("⚡ Fast order cancellation check...")
-    to_cancel = []
-    
-    if not orders or not fair_price:
-        return to_cancel
-    
-    # Much tighter cancellation thresholds for faster response
-    dynamic_threshold = self.config.QUICK_CANCEL_THRESHOLD  # 2% instead of 5%
-    
-    if signals:
-        # Be more aggressive about cancelling when conditions change
-        if signals.order_velocity > 0.05:  # High orderbook activity
-            dynamic_threshold *= 0.5  # Even tighter
-            print(f"   ⚡ High activity - using ultra-tight threshold: {dynamic_threshold:.4f}")
-        
-        # Cancel immediately when flow is strongly directional
-        if signals.flow_confidence > 0.7 and abs(signals.overall_momentum) > 0.5:
-            dynamic_threshold *= 0.3  # Very tight
-            print(f"   🌊 Strong directional flow - using emergency threshold: {dynamic_threshold:.4f}")
-    
-    for order in orders:
-        should_cancel = False
-        reason = ""
-        
-        # Age-based cancellation
-        if current_time and hasattr(order, 'created_at'):
-            order_age = current_time - order.created_at
-            if order_age > self.config.MAX_ORDER_AGE_SECONDS:
-                should_cancel = True
-                reason = f"order too old ({order_age:.1f}s)"
-        
-        # Price-based cancellation (much tighter)
-        if not should_cancel:
-            if order.side == 'buy' and order.price < fair_price * (1 - dynamic_threshold):
-                should_cancel = True
-                reason = f"bid too low ({order.price:.2f} vs {fair_price * (1 - dynamic_threshold):.2f})"
-            elif order.side == 'sell' and order.price > fair_price * (1 + dynamic_threshold):
-                should_cancel = True
-                reason = f"ask too high ({order.price:.2f} vs {fair_price * (1 + dynamic_threshold):.2f})"
-        
-        # Microstructure-based cancellation (more aggressive)
-        if signals and not should_cancel:
-            # Cancel if we're on the wrong side of strong flow
-            if signals.flow_confidence > 0.6:  # Lower threshold
-                if order.side == 'buy' and signals.overall_momentum < -0.4:  # Lower threshold
-                    should_cancel = True
-                    reason = "strong sell flow detected"
-                elif order.side == 'sell' and signals.overall_momentum > 0.4:  # Lower threshold
-                    should_cancel = True
-                    reason = "strong buy flow detected"
-            
-            # Cancel during moderate adverse selection risk
-            if signals.adverse_selection_risk > 0.4:  # Lower threshold
-                should_cancel = True
-                reason = f"moderate adverse selection risk ({signals.adverse_selection_risk:.3f})"
-        
-        if should_cancel:
-            to_cancel.append(order.order_id)
-            print(f"   ❌ Fast cancel {order.order_id}: {reason}")
-    
-        print(f"   📝 Marked {len(to_cancel)}/{len(orders)} orders for fast cancellation")
-        return to_cancel
+        size = max(size, self.config.MIN_ORDER_SIZE)
+        size = round(size, self.config.SIZE_DECIMALS)
 
-    def generate_orders_fast(self, orderbook: Dict, position: Optional[Position], account_value: float, signals: Optional[MarketSignals] = None) -> List[Dict]:
-        """Faster order generation with cached calculations"""
-        print("⚡ Fast order generation...")
-        
-        try:
-            # Quick feasibility check
-            if not self.should_place_orders(position, orderbook, signals):
-                print("❌ Fast check: conditions not favorable")
-                return []
-            
-            fair_price = self.calculate_fair_price(orderbook)
-            if not fair_price:
-                print("❌ Fast check: no fair price")
-                return []
-            
-            tick_size = orderbook.get('tick_size', 0.5)
-            
-            # Use cached/simplified calculations
-            print("📈 Fast price calculation...")
-            bid_price, ask_price = self.calculate_order_prices(fair_price, position, signals, tick_size)
-            
-            print("📊 Fast size calculation...")
-            bid_size, ask_size = self.calculate_order_sizes(position, fair_price, account_value, signals)
-            
-            orders = []
-            
-            # Generate orders with minimal validation
-            if bid_size >= self.config.MIN_ORDER_SIZE:
-                bid_order = {
-                    'coin': self.config.SYMBOL,
-                    'is_buy': True,
-                    'sz': bid_size,
-                    'limit_px': bid_price,
-                    'order_type': {'limit': {'tif': self.config.TIME_IN_FORCE}},
-                    'reduce_only': False
-                }
-                orders.append(bid_order)
-                print(f"   ✅ Fast BID: {bid_size:.{self.config.SIZE_DECIMALS}f} @ ${bid_price:.5f}")
-            
-            if ask_size >= self.config.MIN_ORDER_SIZE:
-                ask_order = {
-                    'coin': self.config.SYMBOL,
-                    'is_buy': False,
-                    'sz': ask_size,
-                    'limit_px': ask_price,
-                    'order_type': {'limit': {'tif': self.config.TIME_IN_FORCE}},
-                    'reduce_only': False
-                }
-                orders.append(ask_order)
-                print(f"   ✅ Fast ASK: {ask_size:.{self.config.SIZE_DECIMALS}f} @ ${ask_price:.5f}")
-            
-            print(f"⚡ Fast generated {len(orders)} orders")
-            return orders
-            
-        except Exception as e:
-            print(f"❌ Error in fast order generation: {e}")
-            return []
+        if size >= self.config.MIN_ORDER_SIZE:
+            orders.append({
+                'coin': self.config.SYMBOL,
+                'is_buy': True,
+                'sz': size,
+                'limit_px': bid_price,
+                'order_type': {'limit': {'tif': self.config.TIME_IN_FORCE}},
+                'reduce_only': False
+            })
+            orders.append({
+                'coin': self.config.SYMBOL,
+                'is_buy': False,
+                'sz': size,
+                'limit_px': ask_price,
+                'order_type': {'limit': {'tif': self.config.TIME_IN_FORCE}},
+                'reduce_only': False
+            })
 
-    # 4. Add this helper method to cache expensive calculations
-    def _cache_expensive_calculations(self):
-        """Cache expensive calculations to speed up order generation"""
-        # This could cache things like:
-        # - Recent spread calculations
-        # - Position risk metrics
-        # - Account value ratios
-        # - Microstructure analysis results
-        pass
+        return orders
+
+@dataclass
+class RiskManagementConfig:
+    # Stop-loss settings
+    ENABLE_STOP_LOSS: bool = True
+    STOP_LOSS_PCT: float = 2.0  # 2% stop loss
+    TRAILING_STOP_LOSS: bool = True
+    TRAILING_STOP_DISTANCE: float = 1.0  # 1% trailing distance
+    
+    # Profit-taking settings
+    ENABLE_PROFIT_TAKING: bool = True
+    PROFIT_TARGET_PCT: float = 1.5  # 1.5% profit target
+    PARTIAL_PROFIT_LEVELS: List[float] = None  # [0.5, 1.0, 1.5] # Take profits at these %
+    
+    # Position skewing for profit
+    ENABLE_PROFIT_SKEW: bool = True
+    MAX_PROFIT_SKEW: float = 0.5  # Max 0.5% additional skew for profitable positions
+    SKEW_SCALING_FACTOR: float = 0.3  # How aggressively to skew
+    
+    def __post_init__(self):
+        if self.PARTIAL_PROFIT_LEVELS is None:
+            self.PARTIAL_PROFIT_LEVELS = [0.5, 1.0, 1.5]
+
+class EnhancedMarketMakingStrategyWithRisk(EnhancedMarketMakingStrategy):
+    def __init__(self, config: TradingConfig):
+        super().__init__(config)
+        
+        # ADD THESE LINES for risk management:
+        self.position_entry_price = None
+        self.position_entry_time = None
+        self.highest_profit_price = None
+        self.lowest_loss_price = None
+        self.stop_loss_price = None
+        self.profit_target_price = None
+        self.profit_levels_hit = set()
+        
+        # Simple risk config
+        class SimpleRiskConfig:
+            ENABLE_STOP_LOSS = True
+            STOP_LOSS_PCT = 2.0
+            TRAILING_STOP_LOSS = True
+            TRAILING_STOP_DISTANCE = 1.0
+            ENABLE_PROFIT_TAKING = True
+            PROFIT_TARGET_PCT = 1.5
+            PARTIAL_PROFIT_LEVELS = [0.5, 1.0, 1.5]
+            ENABLE_PROFIT_SKEW = True
+            MAX_PROFIT_SKEW = 0.5
+            SKEW_SCALING_FACTOR = 0.3
+        
+        self.risk_config = SimpleRiskConfig()
+        
+        print(f"🛡️  Risk Management enabled:")
+        print(f"   - Stop-loss: {self.risk_config.STOP_LOSS_PCT}%")
+        print(f"   - Profit target: {self.risk_config.PROFIT_TARGET_PCT}%")
+    
+    def update_position_tracking(self, position, current_price: float):
+        """Update position tracking"""
+        if not position or position.size == 0:
+            self.position_entry_price = None
+            self.stop_loss_price = None
+            self.profit_target_price = None
+            if hasattr(self, 'profit_levels_hit'):
+                self.profit_levels_hit.clear()
+            return
+        
+        if self.position_entry_price is None:
+            self.position_entry_price = getattr(position, 'entry_price', current_price)
+            
+            if position.size > 0:  # Long
+                self.stop_loss_price = self.position_entry_price * (1 - self.risk_config.STOP_LOSS_PCT / 100)
+                self.profit_target_price = self.position_entry_price * (1 + self.risk_config.PROFIT_TARGET_PCT / 100)
+            else:  # Short
+                self.stop_loss_price = self.position_entry_price * (1 + self.risk_config.STOP_LOSS_PCT / 100)
+                self.profit_target_price = self.position_entry_price * (1 - self.risk_config.PROFIT_TARGET_PCT / 100)
+
+    
+    def _update_trailing_stops(self, position: Position, current_price: float):
+        """Update trailing stop-loss levels"""
+        if position.size > 0:  # Long position
+            # Track highest price for trailing stop
+            if self.highest_profit_price is None or current_price > self.highest_profit_price:
+                self.highest_profit_price = current_price
+                
+                # Update trailing stop-loss
+                new_stop = self.highest_profit_price * (1 - self.risk_config.TRAILING_STOP_DISTANCE / 100)
+                if new_stop > self.stop_loss_price:
+                    self.stop_loss_price = new_stop
+                    print(f"📈 Trailing stop updated: ${self.stop_loss_price:.5f}")
+        
+        else:  # Short position
+            # Track lowest price for trailing stop
+            if self.lowest_loss_price is None or current_price < self.lowest_loss_price:
+                self.lowest_loss_price = current_price
+                
+                # Update trailing stop-loss
+                new_stop = self.lowest_loss_price * (1 + self.risk_config.TRAILING_STOP_DISTANCE / 100)
+                if new_stop < self.stop_loss_price:
+                    self.stop_loss_price = new_stop
+                    print(f"📉 Trailing stop updated: ${self.stop_loss_price:.5f}")
+    
+    def check_stop_loss_trigger(self, position, current_price: float) -> bool:
+        """Check if stop-loss should be triggered"""
+        if (not position or not hasattr(self, 'stop_loss_price') or 
+            not self.stop_loss_price or not self.risk_config.ENABLE_STOP_LOSS):
+            return False
+        
+        if position.size > 0:  # Long position
+            return current_price <= self.stop_loss_price
+        else:  # Short position
+            return current_price >= self.stop_loss_price
+    
+    def check_profit_taking_trigger(self, position, current_price: float):
+        """Check profit taking trigger"""
+        if (not position or not hasattr(self, 'position_entry_price') or 
+            not self.position_entry_price or not self.risk_config.ENABLE_PROFIT_TAKING):
+            return None
+        
+        profit_pct = abs(current_price - self.position_entry_price) / self.position_entry_price * 100
+        
+        # Check profit levels
+        if hasattr(self, 'profit_levels_hit'):
+            for level in self.risk_config.PARTIAL_PROFIT_LEVELS:
+                if level not in self.profit_levels_hit and profit_pct >= level:
+                    self.profit_levels_hit.add(level)
+                    return abs(position.size) * 0.25  # 25% profit taking
+        
+        if profit_pct >= self.risk_config.PROFIT_TARGET_PCT:
+            return abs(position.size)  # Full close
+        
+        return None
+    
+    def calculate_profit_skew(self, position: Optional[Position], current_price: float) -> float:
+        """Calculate additional spread skew based on profit"""
+        if (not self.risk_config.ENABLE_PROFIT_SKEW or 
+            not position or 
+            not self.position_entry_price or 
+            position.size == 0):
+            return 0.0
+        
+        # Calculate current profit/loss percentage
+        if position.size > 0:  # Long position
+            profit_pct = (current_price - self.position_entry_price) / self.position_entry_price
+        else:  # Short position
+            profit_pct = (self.position_entry_price - current_price) / self.position_entry_price
+        
+        # Only apply skew if profitable
+        if profit_pct <= 0:
+            return 0.0
+        
+        # Calculate skew (positive = skew towards selling profitable position)
+        max_skew = self.risk_config.MAX_PROFIT_SKEW / 100  # Convert to decimal
+        scaling = self.risk_config.SKEW_SCALING_FACTOR
+        
+        # Scale profit to skew amount
+        skew = min(profit_pct * scaling, max_skew)
+        
+        # Apply skew direction based on position
+        if position.size > 0:  # Long position - skew towards selling
+            return skew
+        else:  # Short position - skew towards buying back
+            return -skew
+    
+    def generate_stop_loss_order(self, position, current_price: float):
+        """Generate stop-loss order with valid price formatting"""
+        if not self.check_stop_loss_trigger(position, current_price):
+            return None
+        
+        print(f"🛑 DEBUG: Stop-loss price calculation:")
+        print(f"   Current price: ${current_price:.5f}")
+        print(f"   Position size: {position.size}")
+        
+        # Get orderbook to check valid price ranges
+        # For now, use a more conservative price adjustment
+        if position.size > 0:  # Long position - sell to close
+            # For LINK, use a reasonable tick size (usually $0.001 or $0.0001)
+            # Make the stop-loss more conservative - 1% below current price
+            stop_price = current_price * 0.99  # 1% below instead of 0.1%
+            print(f"   Long position: selling at ${stop_price:.5f} (1% below)")
+        else:  # Short position - buy to close
+            stop_price = current_price * 1.01  # 1% above instead of 0.1%
+            print(f"   Short position: buying at ${stop_price:.5f} (1% above)")
+        
+        # Round to appropriate tick size for LINK
+        # LINK typically uses $0.001 tick size
+        tick_size = 0.001
+        stop_price = round(stop_price / tick_size) * tick_size
+        
+        print(f"   Rounded to tick size: ${stop_price:.3f}")
+        
+        # Ensure size is properly formatted
+        size = abs(position.size)
+        size = round(size, self.config.SIZE_DECIMALS)
+        
+        print(f"   Order size: {size:.{self.config.SIZE_DECIMALS}f}")
+        
+        order = {
+            'coin': str(self.config.SYMBOL),
+            'is_buy': bool(position.size < 0),
+            'sz': float(size),
+            'limit_px': float(stop_price),
+            'order_type': {'limit': {'tif': 'Gtc'}}
+            # Remove reduce_only for now to test
+        }
+        
+        print(f"🛑 Generated FIXED stop-loss order:")
+        print(f"   {'BUY' if order['is_buy'] else 'SELL'} {order['sz']:.{self.config.SIZE_DECIMALS}f} {order['coin']} @ ${order['limit_px']:.3f}")
+        
+        return order
+
+        
+
+    def generate_profit_taking_order(self, position, current_price: float):
+        """Generate profit taking order"""
+        close_size = self.check_profit_taking_trigger(position, current_price)
+        if not close_size:
+            return None
+        
+        if position.size > 0:  # Long - sell higher
+            price = current_price * 1.0005
+        else:  # Short - buy lower
+            price = current_price * 0.9995
+        
+        return {
+            'coin': self.config.SYMBOL,
+            'is_buy': position.size < 0,
+            'sz': close_size,
+            'limit_px': price,
+            'order_type': {'limit': {'tif': 'Gtc'}},
+            'reduce_only': True
+        }
+    
+    def calculate_order_prices(self, fair_price: float, orderbook: Dict, position: Optional[Position], 
+                              signals: Optional[MarketSignals] = None) -> Tuple[float, float]:
+        """Enhanced order prices with profit skewing"""
+        
+        # Update position tracking
+        self.update_position_tracking(position, fair_price)
+        
+        # Get base prices from parent class
+        bid_price, ask_price = super().calculate_order_prices(fair_price, orderbook, position, signals)
+        
+        # Apply profit skew
+        profit_skew = self.calculate_profit_skew(position, fair_price)
+        
+        if profit_skew != 0:
+            # Positive skew = encourage selling (widen bid, tighten ask)
+            # Negative skew = encourage buying (tighten bid, widen ask)
+            spread = ask_price - bid_price
+            skew_adjustment = spread * profit_skew
+            
+            bid_price -= skew_adjustment
+            ask_price -= skew_adjustment
+            
+            print(f"💰 Applied profit skew: {profit_skew*100:.3f}% (${skew_adjustment:.5f})")
+            print(f"   Adjusted prices: bid=${bid_price:.5f}, ask=${ask_price:.5f}")
+        
+        return bid_price, ask_price
+    
+    def generate_enhanced_orders_with_risk(self, orderbook, position, account_value, signals=None):
+        """Generate orders with risk management"""
+        # Update position tracking first
+        current_price = orderbook.get('mid_price', 0)
+        self.update_position_tracking(position, current_price)
+        
+        # Check for stop loss
+        if position and self.check_stop_loss_trigger(position, current_price):
+            stop_order = self.generate_stop_loss_order(position, current_price)
+            if stop_order:
+                return [stop_order]
+        
+        # Check for profit taking
+        orders = []
+        if position and self.check_profit_taking_trigger(position, current_price):
+            profit_order = self.generate_profit_taking_order(position, current_price)
+            if profit_order:
+                orders.append(profit_order)
+        
+        # Add normal orders
+        normal_orders = self.generate_orders(orderbook, position, account_value, signals)
+        orders.extend(normal_orders)
+        
+        return orders
+    
+    def get_risk_status(self, position, current_price: float):
+        """Get risk status"""
+        if not position or position.size == 0:
+            return {'status': 'FLAT', 'no_position': True}
+        
+        return {
+            'position_size': position.size,
+            'entry_price': getattr(self, 'position_entry_price', 0) or 0,
+            'current_price': current_price,
+            'unrealized_pnl': position.calculate_unrealized_pnl(current_price),
+            'stop_loss_price': getattr(self, 'stop_loss_price', 0) or 0,
+            'profit_target_price': getattr(self, 'profit_target_price', 0) or 0,
+            'stop_loss_distance': 0.0,
+            'profit_target_distance': 0.0,
+            'profit_levels_hit': list(getattr(self, 'profit_levels_hit', set()))
+        }
+    

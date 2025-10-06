@@ -7,13 +7,12 @@ import time
 import numpy as np
 from typing import Optional, Dict, List
 from config import TradingConfig
-from data_manager import DataManager
-from position_tracker import PositionTracker, Order
-from enhanced_strategy import EnhancedMarketMakingStrategy  # Use enhanced strategy
-from trading_client import TradingClient
-from market_microstructure import MarketMicrostructure
-from websocket_manager import DataManagerWithWebSocket
-from enhanced_strategy_with_stoploss import EnhancedMarketMakingStrategyWithRisk
+from core.data_manager import DataManager
+from core.position_tracker import PositionTracker, Order
+from strategy import EnhancedMarketMakingStrategyWithRisk
+from core.trading_client import TradingClient
+from analysis.market_microstructure import MarketMicrostructure
+from core.websocket_manager import DataManagerWithWebSocket
 
 class EnhancedHyperliquidMarketMaker:
     def __init__(self):

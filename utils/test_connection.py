@@ -12,7 +12,7 @@ if sys.platform == 'win32':
     os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 from config import TradingConfig
-from trading_client import TradingClient
+from core.trading_client import TradingClient
 
 async def test_connection():
     print("Testing Hyperliquid Connection...")
