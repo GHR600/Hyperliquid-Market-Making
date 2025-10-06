@@ -265,35 +265,43 @@ class EnhancedMarketMakingStrategyWithRisk(EnhancedMarketMakingStrategy):
         return None
     
     def calculate_profit_skew(self, position: Optional[Position], current_price: float) -> float:
-        """Calculate additional spread skew based on profit"""
-        if (not self.risk_config.ENABLE_PROFIT_SKEW or 
-            not position or 
-            not self.position_entry_price or 
-            position.size == 0):
+        """Calculate exponential inventory skew that gets aggressive as position approaches limits
+
+        This replaces the old profit-based skew with position-based inventory management.
+        Returns skew as a decimal (e.g., 0.02 = 2% of spread)
+
+        The skew pushes prices AWAY from adding to position when near limits:
+        - Long position: increases ask price, decreases bid price (encourages selling)
+        - Short position: decreases ask price, increases bid price (encourages buying back)
+        """
+        if not position or position.size == 0:
             return 0.0
-        
-        # Calculate current profit/loss percentage
-        if position.size > 0:  # Long position
-            profit_pct = (current_price - self.position_entry_price) / self.position_entry_price
-        else:  # Short position
-            profit_pct = (self.position_entry_price - current_price) / self.position_entry_price
-        
-        # Only apply skew if profitable
-        if profit_pct <= 0:
-            return 0.0
-        
-        # Calculate skew (positive = skew towards selling profitable position)
-        max_skew = self.risk_config.MAX_PROFIT_SKEW / 100  # Convert to decimal
-        scaling = self.risk_config.SKEW_SCALING_FACTOR
-        
-        # Scale profit to skew amount
-        skew = min(profit_pct * scaling, max_skew)
-        
-        # Apply skew direction based on position
-        if position.size > 0:  # Long position - skew towards selling
-            return skew
-        else:  # Short position - skew towards buying back
-            return -skew
+
+        # Calculate inventory ratio (-1.0 to +1.0)
+        max_position = self.config.MAX_POSITION_PCT
+        inventory_ratio = position.size / max_position
+
+        # Clamp to [-1, 1] for safety
+        inventory_ratio = max(-1.0, min(1.0, inventory_ratio))
+
+        # Apply EXPONENTIAL scaling: skew = sign(ratio) * (abs(ratio) ** 2)
+        # This makes the skew grow exponentially as position size increases
+        # Examples:
+        #   50% of max (0.5 ratio) -> 0.25 squared effect (moderate)
+        #   80% of max (0.8 ratio) -> 0.64 squared effect (aggressive)
+        #   90% of max (0.9 ratio) -> 0.81 squared effect (very aggressive)
+        sign = 1.0 if inventory_ratio > 0 else -1.0
+        exponential_skew = sign * (abs(inventory_ratio) ** 2)
+
+        # Maximum skew as percentage (2-3% of spread)
+        MAX_SKEW_PCT = 0.025  # 2.5% maximum skew
+
+        # Scale the exponential skew to our maximum
+        skew = exponential_skew * MAX_SKEW_PCT
+
+        # Positive skew = long position = push prices to encourage selling
+        # Negative skew = short position = push prices to encourage buying
+        return skew
     
     def generate_stop_loss_order(self, position, current_price: float):
         """Generate stop-loss order with valid price formatting"""
@@ -364,31 +372,50 @@ class EnhancedMarketMakingStrategyWithRisk(EnhancedMarketMakingStrategy):
             'reduce_only': True
         }
     
-    def calculate_order_prices(self, fair_price: float, orderbook: Dict, position: Optional[Position], 
+    def calculate_order_prices(self, fair_price: float, orderbook: Dict, position: Optional[Position],
                               signals: Optional[MarketSignals] = None) -> Tuple[float, float]:
-        """Enhanced order prices with profit skewing"""
-        
+        """Enhanced order prices with exponential inventory skewing"""
+
         # Update position tracking
         self.update_position_tracking(position, fair_price)
-        
+
         # Get base prices from parent class
         bid_price, ask_price = super().calculate_order_prices(fair_price, orderbook, position, signals)
-        
-        # Apply profit skew
-        profit_skew = self.calculate_profit_skew(position, fair_price)
-        
-        if profit_skew != 0:
-            # Positive skew = encourage selling (widen bid, tighten ask)
-            # Negative skew = encourage buying (tighten bid, widen ask)
-            spread = ask_price - bid_price
-            skew_adjustment = spread * profit_skew
-            
-            bid_price -= skew_adjustment
-            ask_price -= skew_adjustment
-            
-            print(f"💰 Applied profit skew: {profit_skew*100:.3f}% (${skew_adjustment:.5f})")
-            print(f"   Adjusted prices: bid=${bid_price:.5f}, ask=${ask_price:.5f}")
-        
+
+        # Calculate base spread before skewing
+        base_spread = ask_price - bid_price
+
+        # Apply exponential inventory skew
+        inventory_skew = self.calculate_profit_skew(position, fair_price)
+
+        if inventory_skew != 0 and position:
+            # Calculate inventory ratio for logging
+            max_position = self.config.MAX_POSITION_PCT
+            inventory_ratio = position.size / max_position
+            inventory_pct = inventory_ratio * 100
+
+            # Apply skew: shift BOTH prices in the direction that discourages adding to position
+            # Positive skew (long position): shift both prices UP to discourage buying, encourage selling
+            # Negative skew (short position): shift both prices DOWN to discourage selling, encourage buying
+            skew_adjustment = base_spread * inventory_skew
+
+            # Shift both bid and ask by the skew amount
+            bid_price += skew_adjustment
+            ask_price += skew_adjustment
+
+            # Calculate effective skew as percentage of spread
+            skew_pct = abs(inventory_skew) * 100
+
+            # Log inventory management details
+            position_type = "LONG" if position.size > 0 else "SHORT"
+            print(f"📊 Inventory Skew Applied [{position_type}]:")
+            print(f"   Position: {position.size:.4f} / {max_position:.4f} ({inventory_pct:.1f}%)")
+            print(f"   Inventory Ratio: {inventory_ratio:.3f}")
+            print(f"   Exponential Skew: {skew_pct:.2f}% of spread")
+            print(f"   Skew Adjustment: ${skew_adjustment:.5f}")
+            print(f"   Direction: {'↑ Shift UP (discourage buys)' if inventory_skew > 0 else '↓ Shift DOWN (discourage sells)'}")
+            print(f"   Final: bid=${bid_price:.5f}, ask=${ask_price:.5f}")
+
         return bid_price, ask_price
     
     def generate_enhanced_orders_with_risk(self, orderbook, position, account_value, signals=None):
