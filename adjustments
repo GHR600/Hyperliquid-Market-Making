@@ -1,0 +1,130 @@
+Replace the basic fair price calculation with microprice in strategy.py:
+
+1. Find calculate_fair_price() method in EnhancedMarketMakingStrategy class
+
+2. Add a new method calculate_microprice():
+   - Extract best_bid, best_ask, bid_size, ask_size from orderbook
+   - Formula: (best_bid * ask_size + best_ask * bid_size) / (bid_size + ask_size)
+   - This weights prices by the OPPOSITE side's size (thin side gets more weight)
+   - Return the microprice
+
+3. Update calculate_fair_price() to use microprice as the base:
+   - Start with microprice instead of simple mid
+   - Keep existing imbalance adjustments if any
+   - Return the adjusted microprice
+
+4. Add logging to show:
+   - Simple mid price
+   - Microprice
+   - Difference between them
+
+Keep all existing functionality. Show me the exact code changes.
+
+Add order flow pressure adjustment to fair value calculation in strategy.py:
+
+1. Create new method calculate_flow_adjusted_price():
+   - Takes: orderbook, recent_trades (from microstructure analyzer)
+   - Calculate microprice first
+   - Get last 20 trades from recent_trades
+   - Sum aggressive buy volume (side == 'B')
+   - Sum aggressive sell volume (side == 'A')
+   - Calculate flow_imbalance = (buy_vol - sell_vol) / total_vol
+   - Adjust microprice: microprice + (flow_imbalance * spread * 0.3)
+   - Return adjusted price
+
+2. Update calculate_fair_price() to call this method:
+   - Pass orderbook and get recent trades from self.microstructure if available
+   - Use flow_adjusted_price as fair value
+   - Keep other adjustments
+
+3. Add to status logging:
+   - Flow imbalance value (-1 to +1)
+   - Flow adjustment in dollars
+   - Whether we're adjusting price up or down
+
+Show exact code for strategy.py.
+
+Implement dynamic spread widening based on adverse selection risk in strategy.py:
+
+1. In calculate_order_prices(), before calculating bid/ask:
+   - Get adverse_risk from orderbook_analyzer (you already have this)
+   - Define base_spread = self.config.BASE_SPREAD
+   - Calculate risk_multiplier starting at 1.0
+
+2. Widen spread based on multiple risk factors:
+   - If adverse_risk.overall_risk > 0.6: risk_multiplier *= 1.4
+   - If adverse_risk.spread_percentile < 20 (abnormally tight): risk_multiplier *= 1.3
+   - If condition.condition_type == "VOLATILE": risk_multiplier *= 1.5
+   - If orderbook['spread_pct'] < 0.05 (very tight market): risk_multiplier *= 1.2
+
+3. Apply adjusted spread:
+   - adjusted_spread = base_spread * risk_multiplier
+   - Use this for bid/ask calculation instead of base_spread
+
+4. Add logging before placing orders:
+   - Base spread percentage
+   - Risk multiplier value
+   - Final adjusted spread percentage
+   - Reason for widening (which factors triggered)
+
+Show me the exact code changes for strategy.py.
+
+Add intelligent order placement that joins existing levels instead of always creating new ones:
+
+1. In strategy.py, create new method find_optimal_quote_levels():
+   - Takes: orderbook, fair_value, side ('bid' or 'ask')
+   - Parameters: min_join_size = fair_value * 0.01 (configurable)
+   - Look at top 5 levels on the specified side
+   - For each level, check if it's "good to join":
+     * Distance from fair_value < 0.003 (0.3%)
+     * Size at that level > min_join_size
+   - If found good level, return that price
+   - If no good level found, return fair_value +/- (spread/2)
+
+2. Update calculate_order_prices():
+   - After calculating base bid/ask from fair_value
+   - Call find_optimal_quote_levels() for both sides
+   - Compare the "join price" vs "create new level price"
+   - Use the join price if it's within 0.2% of calculated price
+   - Otherwise use calculated price
+
+3. Add to config.py:
+   - JOIN_EXISTING_LEVELS = True
+   - MIN_JOIN_SIZE_MULTIPLIER = 0.01  # 1% of position size
+   - MAX_JOIN_DISTANCE_PCT = 0.003  # 0.3% from fair value
+
+4. Log when joining vs creating:
+   - "Joining existing bid at $X (size: Y)"
+   - "Creating new bid level at $X"
+
+Show exact code for strategy.py and config additions.
+
+Create a sophisticated multi-factor fair value model in strategy.py:
+
+1. Add new method calculate_multi_factor_fair_value():
+   - Takes: orderbook, signals (from microstructure)
+   - Calculate 3 components:
+     a) microprice (weight: 50%)
+     b) flow_adjusted_price using recent trades (weight: 30%)
+     c) depth_pressure_price using bid/ask depth imbalance (weight: 20%)
+   
+2. For depth_pressure_price:
+   - Sum bid volume in top 10 levels
+   - Sum ask volume in top 10 levels
+   - Calculate pressure = (bid_vol - ask_vol) / (bid_vol + ask_vol)
+   - Adjust microprice: microprice * (1 + pressure * 0.002)
+
+3. Combine with weights:
+   - fair_value = 0.5 * microprice + 0.3 * flow_price + 0.2 * pressure_price
+
+4. Replace calculate_fair_price() to use this model:
+   - Check if we have all required data (orderbook, signals)
+   - Use multi_factor_fair_value if available
+   - Fallback to microprice if signals missing
+
+5. Add detailed logging:
+   - Show all 3 components and their values
+   - Show final weighted fair value
+   - Show distance from simple mid price
+
+Show complete code for the new method and integration.

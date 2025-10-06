@@ -454,7 +454,7 @@ class DataManager:
                     diff = abs(bids[i][0] - bids[i+1][0])
                     if diff > 0:
                         price_diffs.append(diff)
-                
+
                 if price_diffs:
                     # The minimum difference is likely the tick size
                     tick_size = min(price_diffs)
@@ -462,6 +462,48 @@ class DataManager:
                     return tick_size
         except:
             pass
-        
+
         # Fallback for BTC
         return 1
+
+    def get_funding_rate(self, symbol: str = None) -> float:
+        """Get current funding rate for the symbol
+
+        Uses info.meta() to fetch universe data and extract funding rate.
+        Funding rate is the periodic payment between longs and shorts.
+
+        Returns:
+            float: Funding rate as a decimal (e.g., 0.0001 = 0.01%)
+                   Returns 0.0 if not found or on error
+        """
+        coin = symbol or self.config.SYMBOL
+
+        try:
+            # Fetch meta data which contains funding rates
+            meta_data = self.info.meta()
+
+            if not meta_data or 'universe' not in meta_data:
+                self.logger.warning(f"No meta data available for funding rate")
+                return 0.0
+
+            # Find our symbol in the universe
+            for asset in meta_data.get('universe', []):
+                if asset.get('name') == coin:
+                    # Extract funding rate
+                    funding = asset.get('funding')
+
+                    if funding is not None:
+                        # Convert to float
+                        funding_rate = float(funding)
+                        return funding_rate
+                    else:
+                        self.logger.debug(f"No funding data for {coin}")
+                        return 0.0
+
+            # Symbol not found
+            self.logger.warning(f"Symbol {coin} not found in universe for funding rate")
+            return 0.0
+
+        except Exception as e:
+            self.logger.error(f"Error fetching funding rate for {coin}: {e}")
+            return 0.0

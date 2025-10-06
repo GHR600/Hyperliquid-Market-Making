@@ -29,23 +29,327 @@ class EnhancedMarketMakingStrategy:
         # Track our fills for adverse selection analysis
         self.recent_fills = []
 
+        # Flow adjustment tracking (for logging)
+        self.last_flow_imbalance = 0.0
+        self.last_flow_adjustment = 0.0
+
         print(f"🎯 Enhanced MarketMaking Strategy initialized")
         print(f"   - Base spread: {config.BASE_SPREAD * 100:.2f}%")
         print(f"   - Order size: {'percentage-based' if config.USE_PERCENTAGE_SIZING else 'fixed'}")
         print(f"   - Max orders per side: {config.MAX_ORDERS_PER_SIDE}")
         print(f"   - Orderbook-based decision making: ENABLED")
+        print(f"   - Flow-adjusted pricing: ENABLED")
 
     def update_baselines_from_learning(self, learning_stats: Dict):
         """Update strategy baselines from learning phase"""
         print("🎓 Strategy: Updating baselines from learning phase...")
         self.orderbook_analyzer.update_baselines_from_learning(learning_stats)
 
-    def calculate_fair_price(self, orderbook: Dict) -> Optional[float]:
-        """Calculate sophisticated fair price using orderbook analysis"""
-        imbalance, gaps, liquidity, condition = self.orderbook_analyzer.analyze_orderbook(orderbook)
-        if imbalance.weighted_mid == 0:
+    def calculate_microprice(self, orderbook: Dict) -> Optional[float]:
+        """Calculate microprice - a more sophisticated fair price estimate
+
+        Microprice weights prices by the OPPOSITE side's size:
+        - Thin ask side (low liquidity) -> price closer to ask
+        - Thin bid side (low liquidity) -> price closer to bid
+
+        Formula: (best_bid * ask_size + best_ask * bid_size) / (bid_size + ask_size)
+
+        This is superior to simple mid because it accounts for liquidity imbalance
+        and provides better price discovery.
+        """
+        try:
+            bids = orderbook.get('bids', [])
+            asks = orderbook.get('asks', [])
+
+            if not bids or not asks:
+                return None
+
+            # Extract best bid/ask and their sizes
+            best_bid = bids[0][0]
+            bid_size = bids[0][1]
+            best_ask = asks[0][0]
+            ask_size = asks[0][1]
+
+            # Check for zero sizes
+            if bid_size <= 0 or ask_size <= 0:
+                # Fallback to simple mid
+                return (best_bid + best_ask) / 2
+
+            # Calculate microprice: weights by opposite side's size
+            # Thin ask -> higher weight to ask price (expect upward pressure)
+            # Thin bid -> higher weight to bid price (expect downward pressure)
+            microprice = (best_bid * ask_size + best_ask * bid_size) / (bid_size + ask_size)
+
+            return microprice
+
+        except Exception as e:
+            self.logger.error(f"Error calculating microprice: {e}")
+            # Fallback to simple mid
+            if orderbook.get('mid_price'):
+                return orderbook.get('mid_price')
             return None
-        return self.orderbook_analyzer.calculate_smart_fair_price(orderbook, imbalance)
+
+    def calculate_flow_adjusted_price(self, orderbook: Dict, recent_trades: List[Dict] = None) -> Tuple[Optional[float], float, float]:
+        """Calculate flow-adjusted price using order flow pressure
+
+        Analyzes recent aggressive trades (market orders) to adjust fair price:
+        - Heavy buying pressure -> adjust price UP
+        - Heavy selling pressure -> adjust price DOWN
+
+        Args:
+            orderbook: Current orderbook data
+            recent_trades: List of recent trades with 'side' and 'size' fields
+
+        Returns:
+            Tuple of (adjusted_price, flow_imbalance, flow_adjustment_dollars)
+            - adjusted_price: Microprice adjusted for order flow
+            - flow_imbalance: -1 to +1 (negative = selling, positive = buying)
+            - flow_adjustment_dollars: Dollar adjustment applied
+        """
+        # Start with microprice
+        microprice = self.calculate_microprice(orderbook)
+        if microprice is None:
+            return None, 0.0, 0.0
+
+        # If no trades available, return unadjusted microprice
+        if not recent_trades or len(recent_trades) == 0:
+            return microprice, 0.0, 0.0
+
+        try:
+            # Get last 20 trades (or all if less than 20)
+            last_trades = recent_trades[-20:]
+
+            # Sum aggressive buy and sell volumes
+            buy_volume = 0.0
+            sell_volume = 0.0
+
+            for trade in last_trades:
+                size = trade.get('size', 0)
+                side = trade.get('side', '')
+
+                if side == 'B':  # Aggressive buy (market buy)
+                    buy_volume += size
+                elif side == 'A':  # Aggressive sell (market sell)
+                    sell_volume += size
+
+            total_volume = buy_volume + sell_volume
+
+            # Calculate flow imbalance (-1 to +1)
+            if total_volume > 0:
+                flow_imbalance = (buy_volume - sell_volume) / total_volume
+            else:
+                flow_imbalance = 0.0
+
+            # Calculate spread for adjustment scaling
+            best_bid = orderbook.get('best_bid', 0)
+            best_ask = orderbook.get('best_ask', 0)
+            spread = best_ask - best_bid if best_ask > best_bid else 0.0
+
+            # Adjust microprice based on flow
+            # flow_imbalance * spread * 0.3 means:
+            # - Max adjustment is 30% of spread
+            # - Positive flow (buying) -> push price up
+            # - Negative flow (selling) -> push price down
+            flow_adjustment = flow_imbalance * spread * 0.3
+
+            adjusted_price = microprice + flow_adjustment
+
+            return adjusted_price, flow_imbalance, flow_adjustment
+
+        except Exception as e:
+            self.logger.error(f"Error calculating flow adjusted price: {e}")
+            return microprice, 0.0, 0.0
+
+    def calculate_depth_pressure_price(self, orderbook: Dict) -> Tuple[Optional[float], float]:
+        """Calculate price adjustment based on bid/ask depth imbalance
+
+        Deep bid side → upward pressure → higher price
+        Deep ask side → downward pressure → lower price
+
+        Args:
+            orderbook: Current orderbook data
+
+        Returns:
+            Tuple of (pressure_adjusted_price, depth_pressure)
+            - pressure_adjusted_price: Microprice adjusted for depth
+            - depth_pressure: -1 to +1 (negative = ask heavy, positive = bid heavy)
+        """
+        microprice = self.calculate_microprice(orderbook)
+        if microprice is None:
+            return None, 0.0
+
+        try:
+            bids = orderbook.get('bids', [])
+            asks = orderbook.get('asks', [])
+
+            if not bids or not asks:
+                return microprice, 0.0
+
+            # Sum volume in top 10 levels
+            bid_volume = sum(bid[1] for bid in bids[:10] if len(bid) >= 2)
+            ask_volume = sum(ask[1] for ask in asks[:10] if len(ask) >= 2)
+
+            total_volume = bid_volume + ask_volume
+
+            if total_volume <= 0:
+                return microprice, 0.0
+
+            # Calculate depth pressure (-1 to +1)
+            # Positive = more bid depth (upward pressure)
+            # Negative = more ask depth (downward pressure)
+            depth_pressure = (bid_volume - ask_volume) / total_volume
+
+            # Adjust microprice based on depth pressure
+            # 0.002 = max 0.2% adjustment at extreme pressure
+            pressure_adjustment = depth_pressure * 0.002
+            pressure_price = microprice * (1 + pressure_adjustment)
+
+            return pressure_price, depth_pressure
+
+        except Exception as e:
+            self.logger.error(f"Error calculating depth pressure price: {e}")
+            return microprice, 0.0
+
+    def calculate_multi_factor_fair_value(self, orderbook: Dict, recent_trades: List[Dict] = None) -> Tuple[Optional[float], Dict]:
+        """Calculate sophisticated multi-factor fair value
+
+        Combines three pricing models with optimal weights:
+        1. Microprice (50% weight) - liquidity-weighted best bid/ask
+        2. Flow-adjusted price (30% weight) - incorporates order flow toxicity
+        3. Depth-pressure price (20% weight) - accounts for orderbook depth imbalance
+
+        Args:
+            orderbook: Current orderbook data
+            recent_trades: Optional list of recent trades
+
+        Returns:
+            Tuple of (fair_value, components_dict)
+            - fair_value: Weighted combination of all factors
+            - components_dict: Dictionary with all component values for logging
+        """
+        components = {
+            'microprice': None,
+            'flow_price': None,
+            'flow_imbalance': 0.0,
+            'flow_adjustment': 0.0,
+            'pressure_price': None,
+            'depth_pressure': 0.0,
+            'simple_mid': orderbook.get('mid_price', 0)
+        }
+
+        try:
+            # Component 1: Microprice (50% weight)
+            microprice = self.calculate_microprice(orderbook)
+            if microprice is None:
+                return None, components
+
+            components['microprice'] = microprice
+
+            # Component 2: Flow-adjusted price (30% weight)
+            flow_price, flow_imbalance, flow_adjustment = self.calculate_flow_adjusted_price(
+                orderbook, recent_trades
+            )
+            components['flow_price'] = flow_price if flow_price else microprice
+            components['flow_imbalance'] = flow_imbalance
+            components['flow_adjustment'] = flow_adjustment
+
+            # Component 3: Depth-pressure price (20% weight)
+            pressure_price, depth_pressure = self.calculate_depth_pressure_price(orderbook)
+            components['pressure_price'] = pressure_price if pressure_price else microprice
+            components['depth_pressure'] = depth_pressure
+
+            # Combine with optimal weights
+            # 50% microprice (base truth)
+            # 30% flow (short-term directional signal)
+            # 20% depth (structural imbalance)
+            fair_value = (
+                0.5 * components['microprice'] +
+                0.3 * components['flow_price'] +
+                0.2 * components['pressure_price']
+            )
+
+            return fair_value, components
+
+        except Exception as e:
+            self.logger.error(f"Error calculating multi-factor fair value: {e}")
+            return microprice if microprice else None, components
+
+    def calculate_fair_price(self, orderbook: Dict, recent_trades: List[Dict] = None) -> Optional[float]:
+        """Calculate sophisticated multi-factor fair price
+
+        Uses advanced multi-factor model combining:
+        1. Microprice (50% weight) - liquidity-weighted best bid/ask
+        2. Flow-adjusted price (30% weight) - order flow toxicity
+        3. Depth-pressure price (20% weight) - orderbook depth imbalance
+
+        Falls back to microprice if signals are missing.
+
+        Args:
+            orderbook: Current orderbook data
+            recent_trades: Optional list of recent trades for flow analysis
+
+        Returns:
+            Fair price estimate, or None if unable to calculate
+        """
+        # Use multi-factor model for most sophisticated pricing
+        fair_value, components = self.calculate_multi_factor_fair_value(orderbook, recent_trades)
+
+        if fair_value is None:
+            # Fallback to microprice if multi-factor fails
+            return self.calculate_microprice(orderbook)
+
+        # Store flow data for status logging
+        self.last_flow_imbalance = components['flow_imbalance']
+        self.last_flow_adjustment = components['flow_adjustment']
+
+        # Detailed logging of all components
+        simple_mid = components['simple_mid']
+        microprice = components['microprice']
+        flow_price = components['flow_price']
+        pressure_price = components['pressure_price']
+        flow_imbalance = components['flow_imbalance']
+        flow_adjustment = components['flow_adjustment']
+        depth_pressure = components['depth_pressure']
+
+        # Log when there are meaningful differences or signals
+        should_log = False
+        if simple_mid > 0 and microprice:
+            diff_pct = abs(microprice - simple_mid) / simple_mid * 100
+            if diff_pct > 0.001:
+                should_log = True
+        if abs(flow_adjustment) > 0.001 or abs(depth_pressure) > 0.05:
+            should_log = True
+
+        if should_log and simple_mid > 0:
+            print(f"💎 Multi-Factor Fair Value Calculation:")
+            print(f"   Simple Mid:     ${simple_mid:.5f}")
+
+            # Component 1: Microprice (50% weight)
+            if microprice:
+                mid_diff_pct = (microprice - simple_mid) / simple_mid * 100
+                print(f"   Microprice:     ${microprice:.5f} ({mid_diff_pct:+.4f}%) [50% weight]")
+
+            # Component 2: Flow price (30% weight)
+            if flow_price and abs(flow_imbalance) > 0.01:
+                flow_direction = "↑ BUY" if flow_imbalance > 0 else "↓ SELL"
+                print(f"   Flow Price:     ${flow_price:.5f} [30% weight]")
+                print(f"     Flow Imbal:   {flow_imbalance:+.3f} ({flow_direction} pressure)")
+                if abs(flow_adjustment) > 0.001:
+                    print(f"     Flow Adj:     ${flow_adjustment:+.5f}")
+
+            # Component 3: Depth pressure (20% weight)
+            if pressure_price and abs(depth_pressure) > 0.01:
+                pressure_direction = "↑ BID heavy" if depth_pressure > 0 else "↓ ASK heavy"
+                print(f"   Pressure Price: ${pressure_price:.5f} [20% weight]")
+                print(f"     Depth Ratio:  {depth_pressure:+.3f} ({pressure_direction})")
+
+            # Final weighted result
+            diff_from_mid = fair_value - simple_mid
+            diff_from_mid_pct = (diff_from_mid / simple_mid) * 100
+            print(f"   ───────────────────────────────")
+            print(f"   Final Fair:     ${fair_value:.5f} ({diff_from_mid_pct:+.4f}% from mid)")
+
+        return fair_value
 
     def should_place_orders(self, position: Optional[Position], orderbook: Dict, signals: Optional[MarketSignals] = None) -> bool:
         """Enhanced order placement decision using orderbook analysis"""
@@ -63,27 +367,168 @@ class EnhancedMarketMakingStrategy:
 
         return True
 
+    def find_optimal_quote_levels(self, orderbook: Dict, fair_value: float, side: str) -> Optional[float]:
+        """Find optimal price level to join existing liquidity
+
+        Analyzes existing orderbook levels to determine if we should join an existing
+        level rather than creating a new one. This improves fill probability and
+        reduces market impact.
+
+        Args:
+            orderbook: Current orderbook data
+            fair_value: Current fair value estimate
+            side: 'bid' or 'ask'
+
+        Returns:
+            Optimal price to quote, or None if no good level found
+        """
+        if not self.config.JOIN_EXISTING_LEVELS:
+            return None
+
+        try:
+            # Get the appropriate side of the book
+            if side == 'bid':
+                levels = orderbook.get('bids', [])
+            elif side == 'ask':
+                levels = orderbook.get('asks', [])
+            else:
+                return None
+
+            if not levels or len(levels) == 0:
+                return None
+
+            # Configuration parameters
+            min_join_size = fair_value * self.config.MIN_JOIN_SIZE_MULTIPLIER
+            max_distance_pct = self.config.MAX_JOIN_DISTANCE_PCT
+
+            # Look at top 5 levels
+            for i, level in enumerate(levels[:5]):
+                if len(level) < 2:
+                    continue
+
+                price = level[0]
+                size = level[1]
+
+                # Calculate distance from fair value
+                distance_pct = abs(price - fair_value) / fair_value
+
+                # Check if this level is "good to join"
+                is_close_enough = distance_pct < max_distance_pct
+                is_large_enough = size > min_join_size
+
+                if is_close_enough and is_large_enough:
+                    # Found a good level to join
+                    return price
+
+            # No good level found
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Error finding optimal quote level: {e}")
+            return None
+
     def calculate_order_prices(self, fair_price: float, orderbook: Dict, position: Optional[Position],
                               signals: Optional[MarketSignals] = None) -> Tuple[float, float]:
-        """Calculate order prices using orderbook analysis"""
+        """Calculate order prices with dynamic spread widening based on adverse selection risk"""
         imbalance, gaps, liquidity, condition = self.orderbook_analyzer.analyze_orderbook(orderbook)
         adverse_risk = self.orderbook_analyzer.calculate_adverse_selection_risk(orderbook, self.recent_fills)
 
+        # Start with base spread
         base_spread = self.config.BASE_SPREAD
-        spread_multiplier = 1.0
+        risk_multiplier = 1.0
+        widening_reasons = []
 
-        if condition.condition_type == "CALM":
-            spread_multiplier *= 0.8
-        elif condition.condition_type == "VOLATILE":
-            spread_multiplier *= 1.5
+        # Dynamic spread widening based on risk factors
 
-        adjusted_spread = base_spread * spread_multiplier
+        # 1. High adverse selection risk
+        if hasattr(adverse_risk, 'overall_risk') and adverse_risk.overall_risk > 0.6:
+            risk_multiplier *= 1.4
+            widening_reasons.append(f"High adverse risk ({adverse_risk.overall_risk:.2f})")
+
+        # 2. Abnormally tight spread (likely toxic flow)
+        if hasattr(adverse_risk, 'spread_percentile') and adverse_risk.spread_percentile < 20:
+            risk_multiplier *= 1.3
+            widening_reasons.append(f"Tight spread percentile ({adverse_risk.spread_percentile:.0f})")
+
+        # 3. Volatile market conditions
+        if condition.condition_type == "VOLATILE":
+            risk_multiplier *= 1.5
+            widening_reasons.append("Volatile market")
+        elif condition.condition_type == "CALM":
+            risk_multiplier *= 0.8
+            widening_reasons.append("Calm market (tighter)")
+
+        # 4. Very tight current spread (< 0.05% = 5 bps)
+        current_spread_pct = orderbook.get('spread_pct', 0)
+        if current_spread_pct < 0.05 and current_spread_pct > 0:
+            risk_multiplier *= 1.2
+            widening_reasons.append(f"Very tight market ({current_spread_pct:.3f}%)")
+
+        # Apply the risk multiplier to base spread
+        adjusted_spread = base_spread * risk_multiplier
         bid_spread = adjusted_spread / 2
         ask_spread = adjusted_spread / 2
 
-        bid_price = fair_price * (1 - bid_spread)
-        ask_price = fair_price * (1 + ask_spread)
+        # Log spread adjustments when significant
+        if risk_multiplier > 1.1 or risk_multiplier < 0.9:
+            print(f"📏 Dynamic Spread Adjustment:")
+            print(f"   Base Spread: {base_spread*100:.2f}%")
+            print(f"   Risk Multiplier: {risk_multiplier:.2f}x")
+            print(f"   Final Spread: {adjusted_spread*100:.2f}%")
+            if widening_reasons:
+                print(f"   Reasons: {', '.join(widening_reasons)}")
 
+        # Calculate base bid/ask prices from fair value and spread
+        calculated_bid = fair_price * (1 - bid_spread)
+        calculated_ask = fair_price * (1 + ask_spread)
+
+        # Try to find existing levels to join (intelligent order placement)
+        join_bid = self.find_optimal_quote_levels(orderbook, fair_price, 'bid')
+        join_ask = self.find_optimal_quote_levels(orderbook, fair_price, 'ask')
+
+        # Decide whether to join or create new levels
+        # Join if the existing level is within 0.2% of our calculated price
+        max_join_deviation = 0.002  # 0.2%
+
+        # Bid side logic
+        if join_bid is not None:
+            bid_deviation = abs(join_bid - calculated_bid) / calculated_bid
+            if bid_deviation <= max_join_deviation:
+                bid_price = join_bid
+                # Log joining
+                if hasattr(self.config, 'LOG_LEVEL') and self.config.LOG_LEVEL == "DEBUG":
+                    bids = orderbook.get('bids', [])
+                    join_size = next((b[1] for b in bids if b[0] == join_bid), 0)
+                    print(f"📍 Joining existing bid at ${join_bid:.5f} (size: {join_size:.4f})")
+            else:
+                bid_price = calculated_bid
+                if hasattr(self.config, 'LOG_LEVEL') and self.config.LOG_LEVEL == "DEBUG":
+                    print(f"📍 Creating new bid level at ${calculated_bid:.5f}")
+        else:
+            bid_price = calculated_bid
+            if hasattr(self.config, 'LOG_LEVEL') and self.config.LOG_LEVEL == "DEBUG":
+                print(f"📍 Creating new bid level at ${calculated_bid:.5f}")
+
+        # Ask side logic
+        if join_ask is not None:
+            ask_deviation = abs(join_ask - calculated_ask) / calculated_ask
+            if ask_deviation <= max_join_deviation:
+                ask_price = join_ask
+                # Log joining
+                if hasattr(self.config, 'LOG_LEVEL') and self.config.LOG_LEVEL == "DEBUG":
+                    asks = orderbook.get('asks', [])
+                    join_size = next((a[1] for a in asks if a[0] == join_ask), 0)
+                    print(f"📍 Joining existing ask at ${join_ask:.5f} (size: {join_size:.4f})")
+            else:
+                ask_price = calculated_ask
+                if hasattr(self.config, 'LOG_LEVEL') and self.config.LOG_LEVEL == "DEBUG":
+                    print(f"📍 Creating new ask level at ${calculated_ask:.5f}")
+        else:
+            ask_price = calculated_ask
+            if hasattr(self.config, 'LOG_LEVEL') and self.config.LOG_LEVEL == "DEBUG":
+                print(f"📍 Creating new ask level at ${calculated_ask:.5f}")
+
+        # Round to tick size
         tick_size = orderbook.get('tick_size', 0.5)
         bid_price = round(bid_price / tick_size) * tick_size
         ask_price = round(ask_price / tick_size) * tick_size

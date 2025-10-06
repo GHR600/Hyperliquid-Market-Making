@@ -16,7 +16,7 @@ class TradingConfig:
     TESTNET: bool = os.getenv("TESTNET", "False").lower() == "true"
     
     # Trading parameters
-    SYMBOL: str = "BTC"  # Hyperliquid uses coin symbols like "BTC", "ETH"
+    SYMBOL: str = "ETH"  # Hyperliquid uses coin symbols like "BTC", "ETH"
     BASE_SPREAD: float = 1  # 0.3% spread
     
     # Symbol-specific parameters (will be auto-fetched)
@@ -40,11 +40,11 @@ class TradingConfig:
     # =================== LEARNING PHASE ===================
     
     # Learning phase settings
-    LEARNING_PHASE_DURATION: float = 10.0  # 5 minutes in seconds (adjust as needed)
+    LEARNING_PHASE_DURATION: float = 0.0  # 5 minutes in seconds (adjust as needed)
     ENABLE_LEARNING_PHASE: bool = True      # Set to False to skip learning phase
     
     # Learning phase behavior
-    LEARNING_PHASE_UPDATE_INTERVAL: float = 2.0  # Faster updates during learning
+    LEARNING_PHASE_UPDATE_INTERVAL: float = 0.01  # Faster updates during learning
     LEARNING_PHASE_LOG_INTERVAL: float = 30.0    # Log progress every 30 seconds
     
     # Minimum data requirements before going live
@@ -59,13 +59,13 @@ class TradingConfig:
     # =================== FASTER ORDER MANAGEMENT ===================
     
     # Timing - Make these much faster
-    UPDATE_INTERVAL: float = 1.0  # Reduced from 5.0 to 1.0 seconds
+    UPDATE_INTERVAL: float = 0.01  # Reduced from 5.0 to 0.01 seconds
     ORDER_REFRESH_INTERVAL: float = 0.5  # New: How often to check/refresh orders
     QUICK_CANCEL_THRESHOLD: float = 0.02  # 2% - Cancel orders faster when price moves
     
     # Order Management Strategy
     ENABLE_AGGRESSIVE_REFRESH: bool = True  # Enable fast order refresh
-    MAX_ORDER_AGE_SECONDS: float = 10.0  # Cancel orders after 10 seconds regardless
+    MAX_ORDER_AGE_SECONDS: float = 15.0  # Cancel orders after 15 seconds regardless
     PRICE_MOVEMENT_CANCEL_THRESHOLD: float = 0.001  # 0.1% price movement triggers cancel
 
     # Performance Optimizations
@@ -153,7 +153,24 @@ class TradingConfig:
     # Risk monitoring
     RISK_CHECK_INTERVAL: float = 0.5  # Check risk every 500ms
     LOG_RISK_STATUS: bool = True
-    
+
+    # =================== FUNDING RATE MONITORING ===================
+
+    # Funding rate alerts
+    ENABLE_FUNDING_ALERTS: bool = True  # Enable funding rate monitoring
+    HIGH_FUNDING_THRESHOLD: float = 0.0001  # 0.01% - Alert when abs(funding) exceeds this
+
+    # Funding rate thresholds for strategy adjustments
+    EXTREME_FUNDING_THRESHOLD: float = 0.0005  # 0.05% - Very high funding
+    FUNDING_CHECK_INTERVAL: float = 60.0  # Check funding every 60 seconds
+
+    # =================== INTELLIGENT ORDER PLACEMENT ===================
+
+    # Join existing liquidity levels
+    JOIN_EXISTING_LEVELS: bool = True  # Try to join existing orders instead of creating new levels
+    MIN_JOIN_SIZE_MULTIPLIER: float = 0.01  # Minimum size to join (1% of fair value)
+    MAX_JOIN_DISTANCE_PCT: float = 0.003  # Maximum distance from fair value to join (0.3%)
+
     def __post_init__(self):
         """Set default values that depend on other config values"""
         if self.TRADE_SIZE_PERCENTILES is None:

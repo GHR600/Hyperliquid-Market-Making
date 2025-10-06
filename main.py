@@ -593,8 +593,15 @@ class EnhancedHyperliquidMarketMaker:
             else:
                 print("📊 No position")
             
-            # Calculate fair price
-            fair_price = self.strategy.calculate_fair_price(orderbook)
+            # Calculate fair price with recent trades for flow adjustment
+            recent_trades_list = list(self.microstructure.trade_history) if hasattr(self.microstructure, 'trade_history') else []
+            # Convert TradeEvent objects to dicts for strategy consumption
+            recent_trades_dicts = [
+                {'price': t.price, 'size': t.size, 'side': 'B' if t.is_aggressive_buy else 'A', 'timestamp': t.timestamp}
+                for t in recent_trades_list
+            ] if recent_trades_list else []
+
+            fair_price = self.strategy.calculate_fair_price(orderbook, recent_trades_dicts)
             if not fair_price:
                 print("❌ Cannot determine fair price - skipping trading logic")
                 return
@@ -670,18 +677,18 @@ class EnhancedHyperliquidMarketMaker:
         if self.learning_phase_active:
             self._log_learning_progress()
             return
-        
+
         print("\n📊 ENHANCED STATUS REPORT WITH RISK MANAGEMENT")
         print("-" * 50)
-        
+
         try:
             # Account and position info
             account_value = self.position_tracker.get_account_value()
             position = self.position_tracker.get_position(self.config.SYMBOL)
             current_orders = self.position_tracker.get_open_orders(self.config.SYMBOL)
-            
+
             print(f"💰 Account Value: ${account_value:.2f}")
-            
+
             if position and fair_price:
                 pnl = position.calculate_unrealized_pnl(fair_price)
                 position_pct = (abs(position.size) * fair_price / account_value * 100) if account_value > 0 else 0
@@ -690,11 +697,53 @@ class EnhancedHyperliquidMarketMaker:
             else:
                 print("📊 Position: No position")
                 print("💹 Unrealized PnL: $0.00")
-            
+
             print(f"📋 Open Orders: {len(current_orders)}")
-            
+
             if fair_price:
                 print(f"💰 Enhanced Fair Price: ${fair_price:.5f}")
+
+            # Funding rate monitoring
+            if self.config.ENABLE_FUNDING_ALERTS:
+                funding_rate = self.data_manager.get_funding_rate()
+                funding_pct = funding_rate * 100
+
+                print(f"💸 Funding Rate: {funding_pct:.4f}%")
+
+                # Determine if we're earning or paying
+                if position and position.size != 0:
+                    # Long position: pays funding if rate is positive, earns if negative
+                    # Short position: earns funding if rate is positive, pays if negative
+                    is_long = position.size > 0
+
+                    if (is_long and funding_rate > 0) or (not is_long and funding_rate < 0):
+                        status = "PAYING"
+                        symbol = "➖"
+                    elif (is_long and funding_rate < 0) or (not is_long and funding_rate > 0):
+                        status = "EARNING"
+                        symbol = "➕"
+                    else:
+                        status = "NEUTRAL"
+                        symbol = "⚪"
+
+                    # Calculate estimated 8-hour funding cost/income
+                    position_notional = abs(position.size) * fair_price if fair_price else 0
+                    funding_amount = position_notional * abs(funding_rate)
+
+                    print(f"   {symbol} Position {status} funding")
+                    print(f"   Estimated 8h: ${funding_amount:.4f} {'cost' if status == 'PAYING' else 'income'}")
+                else:
+                    print(f"   ⚪ No position - no funding impact")
+
+                # Alert if funding rate is high
+                if abs(funding_rate) > self.config.HIGH_FUNDING_THRESHOLD:
+                    alert_symbol = "🔴" if abs(funding_rate) > self.config.HIGH_FUNDING_THRESHOLD * 2 else "🟡"
+                    print(f"   {alert_symbol} HIGH FUNDING ALERT: {funding_pct:.4f}% (threshold: {self.config.HIGH_FUNDING_THRESHOLD*100:.4f}%)")
+
+                    if funding_rate > 0:
+                        print(f"   💡 Longs paying shorts - consider short bias")
+                    else:
+                        print(f"   💡 Shorts paying longs - consider long bias")
             
             # Enhanced microstructure summary
             signals = self.microstructure.get_current_signals()
@@ -703,7 +752,38 @@ class EnhancedHyperliquidMarketMaker:
             print(f"   - Overall Momentum: {signals.overall_momentum:.3f}")
             print(f"   - Adverse Risk: {signals.adverse_selection_risk:.3f}")
             print(f"   - Volume Imbalance: {signals.volume_imbalance:.3f}")
-            
+
+            # Order Flow Pressure Analysis
+            if hasattr(self.strategy, 'last_flow_imbalance') and hasattr(self.strategy, 'last_flow_adjustment'):
+                flow_imbalance = self.strategy.last_flow_imbalance
+                flow_adjustment = self.strategy.last_flow_adjustment
+
+                if abs(flow_imbalance) > 0.01 or abs(flow_adjustment) > 0.001:
+                    print(f"🌊 Order Flow Pressure:")
+                    print(f"   - Flow Imbalance: {flow_imbalance:+.3f} ({flow_imbalance*100:+.1f}%)")
+
+                    # Visual indicator
+                    if flow_imbalance > 0.3:
+                        flow_status = "🟢 Strong BUY pressure"
+                    elif flow_imbalance > 0.1:
+                        flow_status = "🟩 Moderate BUY pressure"
+                    elif flow_imbalance < -0.3:
+                        flow_status = "🔴 Strong SELL pressure"
+                    elif flow_imbalance < -0.1:
+                        flow_status = "🟥 Moderate SELL pressure"
+                    else:
+                        flow_status = "⚪ Neutral flow"
+
+                    print(f"   - Flow Status: {flow_status}")
+                    print(f"   - Price Adjustment: ${flow_adjustment:+.5f}")
+
+                    if flow_adjustment > 0:
+                        print(f"   - Direction: ↑ Adjusting price UP")
+                    elif flow_adjustment < 0:
+                        print(f"   - Direction: ↓ Adjusting price DOWN")
+                    else:
+                        print(f"   - Direction: ⚪ No adjustment")
+
             # NEW: Risk-specific logging
             current_price = fair_price or 0
             if position and hasattr(self.strategy, 'get_risk_status') and current_price > 0:
@@ -812,7 +892,12 @@ class EnhancedHyperliquidMarketMaker:
                 # Calculate enhanced fair price for status
                 fair_price = None
                 if not self.learning_phase_active:
-                    fair_price = self.strategy.calculate_fair_price(orderbook)
+                    recent_trades_list = list(self.microstructure.trade_history) if hasattr(self.microstructure, 'trade_history') else []
+                    recent_trades_dicts = [
+                        {'price': t.price, 'size': t.size, 'side': 'B' if t.is_aggressive_buy else 'A', 'timestamp': t.timestamp}
+                        for t in recent_trades_list
+                    ] if recent_trades_list else []
+                    fair_price = self.strategy.calculate_fair_price(orderbook, recent_trades_dicts)
                 
                 # Log status
                 if self.learning_phase_active:
