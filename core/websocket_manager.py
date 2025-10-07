@@ -330,7 +330,11 @@ class DataManagerWithWebSocket:
     
     async def get_user_fills(self, user_address: str):
         return await self.data_manager.get_user_fills(user_address)
-    
+
+    async def get_funding_rate(self, symbol: str = None):
+        """Delegate to underlying data_manager"""
+        return await self.data_manager.get_funding_rate(symbol)
+
     async def cleanup(self):
         """Cleanup both REST and WebSocket connections"""
         await self.data_manager.cleanup()
