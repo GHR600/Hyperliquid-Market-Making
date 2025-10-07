@@ -17,11 +17,11 @@ class TradingConfig:
     
     # Trading parameters
     SYMBOL: str = "ETH"  # Hyperliquid uses coin symbols like "BTC", "ETH"
-    BASE_SPREAD: float = 1  # 0.3% spread
+    BASE_SPREAD: float = 0.001  # 0.1% spread
     
     # Symbol-specific parameters (will be auto-fetched)
     SIZE_DECIMALS: int = 2  # Will be updated from API
-    PRICE_DECIMALS: int = 8 - SIZE_DECIMALS  # Will be updated from API
+    PRICE_DECIMALS: int = 2
     MAX_LEVERAGE: float = 8000.0  # Will be updated from API
     
     # Position sizing (choose ONE approach)

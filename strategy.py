@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple, Optional
 import time
 import logging
 import numpy as np
+from collections import deque
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 import time
@@ -16,6 +17,334 @@ from analysis.orderbook_analyzer import OrderbookAnalyzer, OrderbookImbalance, O
 # Import base strategy classes inline to avoid circular dependency
 import logging
 from typing import Dict, List, Tuple, Optional
+
+class DynamicPricingEngine:
+    """
+    Sophisticated dynamic bid/ask calculation using:
+    - Fill rate feedback loops
+    - Probabilistic fill modeling
+    - Queue position analysis
+    - Microstructure-informed pricing
+    - Adaptive spread adjustment
+    """
+
+    def __init__(self, config):
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+
+        # Fill rate tracking
+        self.recent_orders = deque(maxlen=50)  # Last 50 orders
+        self.fill_rate_target = 0.40  # Target 40% fill rate
+        self.fill_rate_window = 20  # Calculate over last 20 orders
+
+        # Spread adaptation
+        self.current_bid_offset = 0.0005  # Start at 5 bps
+        self.current_ask_offset = 0.0005
+        self.min_offset = 0.0002  # 2 bps minimum (0.02%)
+        self.max_offset = 0.0030  # 30 bps maximum (0.30%)
+        self.adaptation_step = 0.0001  # Adjust by 1 bp at a time
+
+        # Performance tracking
+        self.orders_placed = 0
+        self.orders_filled = 0
+        self.adverse_fills = 0  # Fills that moved against us immediately
+        self.good_fills = 0  # Fills that were profitable
+
+        # Last calculation metadata
+        self.last_calculation = {
+            'bid_ev': 0.0,
+            'ask_ev': 0.0,
+            'bid_fill_prob': 0.0,
+            'ask_fill_prob': 0.0,
+            'market_pressure': 0.0
+        }
+
+        print("🎯 Dynamic Pricing Engine initialized")
+        print(f"   Target fill rate: {self.fill_rate_target*100:.0f}%")
+        print(f"   Offset range: {self.min_offset*10000:.0f}-{self.max_offset*10000:.0f} bps")
+
+    def record_order_outcome(self, filled: bool, side: str, price: float, market_moved_against: bool = False):
+        """Record order outcome for adaptive learning"""
+        self.orders_placed += 1
+
+        outcome = {
+            'timestamp': time.time(),
+            'filled': filled,
+            'side': side,
+            'price': price,
+            'adverse': market_moved_against if filled else False
+        }
+        self.recent_orders.append(outcome)
+
+        if filled:
+            self.orders_filled += 1
+            if market_moved_against:
+                self.adverse_fills += 1
+            else:
+                self.good_fills += 1
+
+    def get_current_fill_rate(self) -> float:
+        """Calculate recent fill rate"""
+        if len(self.recent_orders) < 5:
+            return 0.5  # Assume 50% until we have data
+
+        recent = list(self.recent_orders)[-self.fill_rate_window:]
+        filled_count = sum(1 for r in recent if r['filled'])
+        return filled_count / len(recent) if recent else 0.5
+
+    def get_adverse_selection_rate(self) -> float:
+        """Calculate rate of adverse fills"""
+        if self.orders_filled < 5:
+            return 0.0
+
+        return self.adverse_fills / self.orders_filled
+
+    def adapt_offsets(self):
+        """Adapt bid/ask offsets based on performance"""
+        current_fill_rate = self.get_current_fill_rate()
+        adverse_rate = self.get_adverse_selection_rate()
+
+        # Feedback loop: adjust offsets to hit target fill rate
+        if current_fill_rate > self.fill_rate_target + 0.10:  # Filling too often
+            # Widen spreads (move away from fair price)
+            self.current_bid_offset = min(self.max_offset, self.current_bid_offset + self.adaptation_step)
+            self.current_ask_offset = min(self.max_offset, self.current_ask_offset + self.adaptation_step)
+            print(f"   📏 Widening spreads: fill rate {current_fill_rate:.1%} > target {self.fill_rate_target:.1%}")
+
+        elif current_fill_rate < self.fill_rate_target - 0.10:  # Not filling enough
+            # Tighten spreads (move toward fair price)
+            self.current_bid_offset = max(self.min_offset, self.current_bid_offset - self.adaptation_step)
+            self.current_ask_offset = max(self.min_offset, self.current_ask_offset - self.adaptation_step)
+            print(f"   📏 Tightening spreads: fill rate {current_fill_rate:.1%} < target {self.fill_rate_target:.1%}")
+
+        # Additional adjustment for adverse selection
+        if adverse_rate > 0.30:  # More than 30% adverse fills
+            # Widen spreads regardless of fill rate
+            self.current_bid_offset = min(self.max_offset, self.current_bid_offset + self.adaptation_step * 2)
+            self.current_ask_offset = min(self.max_offset, self.current_ask_offset + self.adaptation_step * 2)
+            print(f"   ⚠️  High adverse selection: {adverse_rate:.1%} - widening spreads")
+
+    def calculate_fill_probability(self, offset_pct: float, side: str, orderbook: Dict,
+                                   liquidity, condition) -> float:
+        """
+        Estimate probability of getting filled at a given offset from fair price
+        """
+
+        fair_price = orderbook.get('mid_price', 0)
+        if fair_price == 0:
+            return 0.0
+
+        # Calculate where our order would be
+        if side == 'bid':
+            our_price = fair_price * (1 - offset_pct)
+            best_price = orderbook.get('best_bid', 0)
+            levels = orderbook.get('bids', [])
+        else:
+            our_price = fair_price * (1 + offset_pct)
+            best_price = orderbook.get('best_ask', 0)
+            levels = orderbook.get('asks', [])
+
+        if not levels or best_price == 0:
+            return 0.0
+
+        # Base probability from distance to best
+        if side == 'bid':
+            distance_from_best = (best_price - our_price) / best_price
+        else:
+            distance_from_best = (our_price - best_price) / best_price
+
+        # Closer to best = higher fill probability
+        base_prob = 0.80 * np.exp(-distance_from_best * 100)
+
+        # Adjust for queue position
+        existing_liquidity_at_level = 0
+        for level in levels:
+            if abs(level[0] - our_price) < 0.01:
+                existing_liquidity_at_level = level[1]
+                break
+
+        if existing_liquidity_at_level > 0:
+            base_prob *= 0.5  # 50% reduction if behind others
+
+        # Adjust for market volatility
+        if condition.condition_type == "VOLATILE":
+            base_prob *= 1.5
+        elif condition.condition_type == "CALM":
+            base_prob *= 0.7
+
+        # Adjust for liquidity depth
+        total_liquidity = liquidity.total_bid_liquidity + liquidity.total_ask_liquidity
+        if total_liquidity < 100:
+            base_prob *= 1.3
+        elif total_liquidity > 1000:
+            base_prob *= 0.8
+
+        return min(1.0, max(0.0, base_prob))
+
+    def calculate_spread_capture(self, offset_pct: float, fair_price: float) -> float:
+        """Calculate how much spread we capture at this offset"""
+        return fair_price * offset_pct
+
+    def calculate_adverse_selection_cost(self, offset_pct: float, adverse_risk,
+                                         signals, side: str) -> float:
+        """Estimate cost of adverse selection at this offset"""
+
+        base_cost = adverse_risk.overall_risk * 10
+
+        # Flow-based adjustment
+        if signals and hasattr(signals, 'net_aggressive_buying'):
+            flow = signals.net_aggressive_buying
+
+            if side == 'bid' and flow < -0.3:
+                base_cost *= 2.0
+            elif side == 'ask' and flow > 0.3:
+                base_cost *= 2.0
+
+        # Tight spreads = higher adverse selection
+        if offset_pct < 0.0003:
+            base_cost *= 2.0
+
+        return base_cost
+
+    def calculate_expected_value(self, offset_pct: float, side: str, fair_price: float,
+                                orderbook: Dict, liquidity, condition, adverse_risk, signals) -> float:
+        """Calculate expected value of quoting at this offset"""
+
+        fill_prob = self.calculate_fill_probability(offset_pct, side, orderbook, liquidity, condition)
+        spread_capture = self.calculate_spread_capture(offset_pct, fair_price)
+        adverse_cost = self.calculate_adverse_selection_cost(offset_pct, adverse_risk, signals, side)
+
+        ev = fill_prob * (spread_capture - adverse_cost)
+
+        return ev
+
+    def find_optimal_offset(self, side: str, fair_price: float, orderbook: Dict,
+                           liquidity, condition, adverse_risk, signals) -> Tuple[float, Dict]:
+        """Find optimal offset by maximizing expected value"""
+
+        # Test offsets from 2 bps to 30 bps
+        test_offsets = np.linspace(self.min_offset, self.max_offset, 15)
+
+        best_ev = -999999
+        best_offset = self.current_bid_offset if side == 'bid' else self.current_ask_offset
+
+        for offset in test_offsets:
+            ev = self.calculate_expected_value(
+                offset, side, fair_price, orderbook, liquidity, condition, adverse_risk, signals
+            )
+
+            if ev > best_ev:
+                best_ev = ev
+                best_offset = offset
+
+        fill_prob = self.calculate_fill_probability(best_offset, side, orderbook, liquidity, condition)
+
+        metadata = {
+            'best_offset': best_offset,
+            'best_ev': best_ev,
+            'fill_probability': fill_prob
+        }
+
+        return best_offset, metadata
+
+    def calculate_dynamic_prices(self, fair_price: float, orderbook: Dict,
+                                imbalance, gaps, liquidity, condition,
+                                adverse_risk, signals, position) -> Tuple[float, float, Dict]:
+        """Main method: Calculate optimal bid/ask prices dynamically"""
+
+        print(f"\n🎯 DYNAMIC PRICING CALCULATION")
+        print(f"   Fair Price: ${fair_price:.2f}")
+
+        # Adapt offsets based on recent performance
+        if self.orders_placed > 10:
+            self.adapt_offsets()
+
+        # Find optimal offsets using EV maximization
+        bid_offset, bid_meta = self.find_optimal_offset(
+            'bid', fair_price, orderbook, liquidity, condition, adverse_risk, signals
+        )
+
+        ask_offset, ask_meta = self.find_optimal_offset(
+            'ask', fair_price, orderbook, liquidity, condition, adverse_risk, signals
+        )
+
+        # Calculate raw prices
+        bid_price = fair_price * (1 - bid_offset)
+        ask_price = fair_price * (1 + ask_offset)
+
+        print(f"   📊 Optimal offsets:")
+        print(f"      Bid: {bid_offset*10000:.1f} bps → ${bid_price:.2f} (Fill prob: {bid_meta['fill_probability']:.1%})")
+        print(f"      Ask: {ask_offset*10000:.1f} bps → ${ask_price:.2f} (Fill prob: {ask_meta['fill_probability']:.1%})")
+
+        # Flow-based asymmetric adjustment
+        if signals and hasattr(signals, 'net_aggressive_buying'):
+            flow = signals.net_aggressive_buying
+
+            if abs(flow) > 0.3:
+                if flow > 0.3:  # Strong buying
+                    ask_adjustment = 1.0 + (flow * 0.5)
+                    bid_adjustment = 1.0 - (flow * 0.3)
+                else:  # Strong selling
+                    bid_adjustment = 1.0 - (flow * 0.5)
+                    ask_adjustment = 1.0 + (flow * 0.3)
+
+                bid_price = fair_price * (1 - bid_offset * bid_adjustment)
+                ask_price = fair_price * (1 + ask_offset * ask_adjustment)
+
+                print(f"   🌊 Flow adjustment: {flow:+.2f}")
+
+        # Inventory skewing
+        if position and position.size != 0:
+            max_position = self.config.MAX_POSITION_PCT
+            inventory_ratio = position.size / max_position
+            inventory_ratio = max(-1.0, min(1.0, inventory_ratio))
+            sign = 1.0 if inventory_ratio > 0 else -1.0
+            exponential_skew = sign * (abs(inventory_ratio) ** 2)
+            MAX_SKEW_PCT = 0.025
+            inventory_skew = exponential_skew * MAX_SKEW_PCT
+
+            if abs(inventory_skew) > 0.01:
+                spread = ask_price - bid_price
+                skew_adjustment = spread * inventory_skew
+
+                bid_price += skew_adjustment
+                ask_price += skew_adjustment
+
+                print(f"   📊 Inventory skew: {inventory_skew*100:.2f}%")
+
+        # Round to tick size
+        tick_size = orderbook.get('tick_size', 0.5)
+        bid_price = round(bid_price / tick_size) * tick_size
+        ask_price = round(ask_price / tick_size) * tick_size
+
+        # Round to price decimals
+        bid_price = round(bid_price, self.config.PRICE_DECIMALS)
+        ask_price = round(ask_price, self.config.PRICE_DECIMALS)
+
+        # Compile metadata
+        metadata = {
+            'bid_offset_bps': bid_offset * 10000,
+            'ask_offset_bps': ask_offset * 10000,
+            'bid_ev': bid_meta['best_ev'],
+            'ask_ev': ask_meta['best_ev'],
+            'bid_fill_prob': bid_meta['fill_probability'],
+            'ask_fill_prob': ask_meta['fill_probability'],
+            'current_fill_rate': self.get_current_fill_rate(),
+            'adverse_rate': self.get_adverse_selection_rate()
+        }
+
+        spread = ask_price - bid_price
+        spread_pct = (spread / fair_price) * 100
+
+        print(f"   ✅ FINAL PRICES:")
+        print(f"      Bid: ${bid_price:.2f}")
+        print(f"      Ask: ${ask_price:.2f}")
+        print(f"      Spread: ${spread:.2f} ({spread_pct:.3f}%)")
+        print(f"   📈 Performance:")
+        print(f"      Recent fill rate: {metadata['current_fill_rate']:.1%}")
+        print(f"      Adverse selection: {metadata['adverse_rate']:.1%}")
+
+        return bid_price, ask_price, metadata
 
 # Base Enhanced Strategy Class (consolidated from enhanced_strategy.py)
 class EnhancedMarketMakingStrategy:
@@ -666,7 +995,11 @@ class EnhancedMarketMakingStrategyWithRisk(EnhancedMarketMakingStrategy):
             SKEW_SCALING_FACTOR = 0.3
         
         self.risk_config = SimpleRiskConfig()
-        
+
+        # Initialize dynamic pricing engine
+        self.pricing_engine = DynamicPricingEngine(config)
+        print("🎯 Dynamic pricing engine integrated with risk management")
+
         print(f"🛡️  Risk Management enabled:")
         print(f"   - Stop-loss: {self.risk_config.STOP_LOSS_PCT}%")
         print(f"   - Profit target: {self.risk_config.PROFIT_TARGET_PCT}%")
@@ -787,50 +1120,38 @@ class EnhancedMarketMakingStrategyWithRisk(EnhancedMarketMakingStrategy):
         return skew
     
     def generate_stop_loss_order(self, position, current_price: float):
-        """Generate stop-loss order with valid price formatting"""
+        """Generate stop-loss order - FIXED VERSION"""
         if not self.check_stop_loss_trigger(position, current_price):
             return None
-        
-        print(f"🛑 DEBUG: Stop-loss price calculation:")
+
+        print(f"🛑 STOP-LOSS TRIGGERED!")
+        print(f"   Position: {position.size:.4f}")
         print(f"   Current price: ${current_price:.5f}")
-        print(f"   Position size: {position.size}")
-        
-        # Get orderbook to check valid price ranges
-        # For now, use a more conservative price adjustment
-        if position.size > 0:  # Long position - sell to close
-            # For LINK, use a reasonable tick size (usually $0.001 or $0.0001)
-            # Make the stop-loss more conservative - 1% below current price
-            stop_price = current_price * 0.99  # 1% below instead of 0.1%
-            print(f"   Long position: selling at ${stop_price:.5f} (1% below)")
-        else:  # Short position - buy to close
-            stop_price = current_price * 1.01  # 1% above instead of 0.1%
-            print(f"   Short position: buying at ${stop_price:.5f} (1% above)")
-        
-        # Round to appropriate tick size for LINK
-        # LINK typically uses $0.001 tick size
-        tick_size = 0.001
-        stop_price = round(stop_price / tick_size) * tick_size
-        
-        print(f"   Rounded to tick size: ${stop_price:.3f}")
-        
-        # Ensure size is properly formatted
-        size = abs(position.size)
-        size = round(size, self.config.SIZE_DECIMALS)
-        
-        print(f"   Order size: {size:.{self.config.SIZE_DECIMALS}f}")
-        
-        order = {
-            'coin': str(self.config.SYMBOL),
-            'is_buy': bool(position.size < 0),
-            'sz': float(size),
-            'limit_px': float(stop_price),
-            'order_type': {'limit': {'tif': 'Gtc'}}
-            # Remove reduce_only for now to test
-        }
-        
-        print(f"🛑 Generated FIXED stop-loss order:")
-        print(f"   {'BUY' if order['is_buy'] else 'SELL'} {order['sz']:.{self.config.SIZE_DECIMALS}f} {order['coin']} @ ${order['limit_px']:.3f}")
-        
+        print(f"   Stop-loss price: ${self.stop_loss_price:.5f}")
+
+        # Calculate stop execution price with slippage buffer
+        if position.size > 0:  # Long position - sell at market
+            # Use market order to ensure execution
+            order = {
+                'coin': str(self.config.SYMBOL),
+                'is_buy': False,  # Sell to close long
+                'sz': float(abs(position.size)),
+                'limit_px': float(current_price * 0.98),  # 2% slippage buffer
+                'order_type': {'limit': {'tif': 'Ioc'}},  # Immediate or cancel
+                'reduce_only': True
+            }
+        else:  # Short position - buy at market
+            order = {
+                'coin': str(self.config.SYMBOL),
+                'is_buy': True,  # Buy to close short
+                'sz': float(abs(position.size)),
+                'limit_px': float(current_price * 1.02),  # 2% slippage buffer
+                'order_type': {'limit': {'tif': 'Ioc'}},
+                'reduce_only': True
+            }
+
+        print(f"🛑 Stop-loss order: {'BUY' if order['is_buy'] else 'SELL'} {order['sz']:.4f} @ ${order['limit_px']:.5f}")
+
         return order
 
         
@@ -857,47 +1178,24 @@ class EnhancedMarketMakingStrategyWithRisk(EnhancedMarketMakingStrategy):
     
     def calculate_order_prices(self, fair_price: float, orderbook: Dict, position: Optional[Position],
                               signals: Optional[MarketSignals] = None) -> Tuple[float, float]:
-        """Enhanced order prices with exponential inventory skewing"""
+        """Calculate order prices using sophisticated dynamic pricing engine"""
 
         # Update position tracking
         self.update_position_tracking(position, fair_price)
 
-        # Get base prices from parent class
-        bid_price, ask_price = super().calculate_order_prices(fair_price, orderbook, position, signals)
+        # Get comprehensive orderbook analysis
+        imbalance, gaps, liquidity, condition = self.orderbook_analyzer.analyze_orderbook(orderbook)
+        adverse_risk = self.orderbook_analyzer.calculate_adverse_selection_risk(orderbook, self.recent_fills)
 
-        # Calculate base spread before skewing
-        base_spread = ask_price - bid_price
+        # Use dynamic pricing engine
+        bid_price, ask_price, metadata = self.pricing_engine.calculate_dynamic_prices(
+            fair_price, orderbook, imbalance, gaps, liquidity, condition, adverse_risk, signals, position
+        )
 
-        # Apply exponential inventory skew
-        inventory_skew = self.calculate_profit_skew(position, fair_price)
-
-        if inventory_skew != 0 and position:
-            # Calculate inventory ratio for logging
-            max_position = self.config.MAX_POSITION_PCT
-            inventory_ratio = position.size / max_position
-            inventory_pct = inventory_ratio * 100
-
-            # Apply skew: shift BOTH prices in the direction that discourages adding to position
-            # Positive skew (long position): shift both prices UP to discourage buying, encourage selling
-            # Negative skew (short position): shift both prices DOWN to discourage selling, encourage buying
-            skew_adjustment = base_spread * inventory_skew
-
-            # Shift both bid and ask by the skew amount
-            bid_price += skew_adjustment
-            ask_price += skew_adjustment
-
-            # Calculate effective skew as percentage of spread
-            skew_pct = abs(inventory_skew) * 100
-
-            # Log inventory management details
-            position_type = "LONG" if position.size > 0 else "SHORT"
-            print(f"📊 Inventory Skew Applied [{position_type}]:")
-            print(f"   Position: {position.size:.4f} / {max_position:.4f} ({inventory_pct:.1f}%)")
-            print(f"   Inventory Ratio: {inventory_ratio:.3f}")
-            print(f"   Exponential Skew: {skew_pct:.2f}% of spread")
-            print(f"   Skew Adjustment: ${skew_adjustment:.5f}")
-            print(f"   Direction: {'↑ Shift UP (discourage buys)' if inventory_skew > 0 else '↓ Shift DOWN (discourage sells)'}")
-            print(f"   Final: bid=${bid_price:.5f}, ask=${ask_price:.5f}")
+        # Store metadata for dashboard
+        if not hasattr(self, '_pricing_metadata'):
+            self._pricing_metadata = {}
+        self._pricing_metadata = metadata
 
         return bid_price, ask_price
     

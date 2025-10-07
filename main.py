@@ -827,33 +827,23 @@ class EnhancedHyperliquidMarketMaker:
             current_price = fair_price or 0
             if position and hasattr(self.strategy, 'get_risk_status') and current_price > 0:
                 risk_status = self.strategy.get_risk_status(position, current_price)
-                
+
                 if not risk_status.get('no_position'):
                     print(f"🛡️  Risk Management Status:")
-                    
-                    # Safe extraction with defaults
-                    stop_distance = risk_status.get('stop_loss_distance', 0)
-                    profit_distance = risk_status.get('profit_target_distance', 0)
-                    
-                    print(f"   - Stop-Loss Distance: {stop_distance:.2f}%")
-                    print(f"   - Profit Target Distance: {profit_distance:.2f}%")
-                    
-                    profit_skew = 0
-                    if hasattr(self.strategy, 'calculate_profit_skew'):
-                        try:
-                            profit_skew = self.strategy.calculate_profit_skew(position, current_price)
-                            print(f"   - Current Profit Skew: {profit_skew*100:.3f}%")
-                        except:
-                            print(f"   - Current Profit Skew: 0.000%")
-                    
-                    # Risk level assessment
-                    stop_distance_abs = abs(stop_distance)
-                    if stop_distance_abs < 0.5:
-                        print(f"   - Risk Level: 🔴 HIGH (near stop-loss)")
-                    elif stop_distance_abs < 1.0:
-                        print(f"   - Risk Level: 🟡 MEDIUM")
-                    else:
-                        print(f"   - Risk Level: 🟢 LOW")
+
+                    stop_loss_price = risk_status.get('stop_loss_price', 0)
+                    profit_target_price = risk_status.get('profit_target_price', 0)
+
+                    if stop_loss_price > 0:
+                        distance_to_stop = ((current_price - stop_loss_price) / current_price * 100) if position.size > 0 else ((stop_loss_price - current_price) / current_price * 100)
+                        print(f"   - Stop-Loss: ${stop_loss_price:.5f} (distance: {distance_to_stop:.2f}%)")
+
+                        # WARNING if close to stop
+                        if abs(distance_to_stop) < 0.5:
+                            print(f"   ⚠️  CLOSE TO STOP-LOSS!")
+
+                    if profit_target_price > 0:
+                        print(f"   - Profit Target: ${profit_target_price:.5f}")
             
             # Time since trading started
             if hasattr(self, 'trading_start_time') and self.trading_start_time:
@@ -886,6 +876,10 @@ class EnhancedHyperliquidMarketMaker:
                 risk_status = self.strategy.get_risk_status(position, current_price)
                 if not risk_status.get('no_position'):
                     self.metrics_logger.log_risk_metrics(risk_status)
+
+            # Log pricing engine metrics
+            if hasattr(self.strategy, '_pricing_metadata'):
+                self.metrics_logger.log_pricing_metrics(self.strategy._pricing_metadata)
 
         except Exception as e:
             print(f"❌ Error logging enhanced status: {e}")

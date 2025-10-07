@@ -88,10 +88,10 @@ class InfluxMetricsLogger:
             point = Point("signals") \
                 .tag("symbol", self.config.SYMBOL) \
                 .field("flow_confidence", float(signals.flow_confidence)) \
-                .field("net_buying", float(signals.net_buying)) \
+                .field("net_buying", float(signals.net_aggressive_buying)) \
                 .field("volume_imbalance", float(signals.volume_imbalance)) \
-                .field("momentum", float(signals.momentum)) \
-                .field("adverse_risk", float(signals.adverse_risk)) \
+                .field("momentum", float(signals.overall_momentum)) \
+                .field("adverse_risk", float(signals.adverse_selection_risk)) \
                 .time(datetime.utcnow(), WritePrecision.NS)
 
             self.write_api.write(bucket=self.bucket, org=self.org, record=point)
@@ -137,6 +137,29 @@ class InfluxMetricsLogger:
 
         except Exception as e:
             self.logger.error(f"Failed to log risk metrics: {e}")
+
+    def log_pricing_metrics(self, pricing_metadata: Dict):
+        """Log dynamic pricing engine metrics"""
+        if not self.enabled or not pricing_metadata:
+            return
+
+        try:
+            point = Point("pricing_metrics") \
+                .tag("symbol", self.config.SYMBOL) \
+                .field("bid_offset_bps", float(pricing_metadata.get('bid_offset_bps', 0))) \
+                .field("ask_offset_bps", float(pricing_metadata.get('ask_offset_bps', 0))) \
+                .field("bid_fill_prob", float(pricing_metadata.get('bid_fill_prob', 0))) \
+                .field("ask_fill_prob", float(pricing_metadata.get('ask_fill_prob', 0))) \
+                .field("current_fill_rate", float(pricing_metadata.get('current_fill_rate', 0))) \
+                .field("adverse_rate", float(pricing_metadata.get('adverse_rate', 0))) \
+                .field("bid_ev", float(pricing_metadata.get('bid_ev', 0))) \
+                .field("ask_ev", float(pricing_metadata.get('ask_ev', 0))) \
+                .time(datetime.utcnow(), WritePrecision.NS)
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+
+        except Exception as e:
+            self.logger.error(f"Failed to log pricing metrics: {e}")
 
     def cleanup(self):
         """Close InfluxDB connection"""

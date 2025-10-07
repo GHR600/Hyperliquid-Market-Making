@@ -63,7 +63,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"account_value\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"account_value\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -115,7 +115,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"fair_price\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"fair_price\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -175,7 +175,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"position_size\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"position_size\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -235,7 +235,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"unrealized_pnl\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"unrealized_pnl\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -304,7 +304,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -1h)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"fair_price\")\n  |> aggregateWindow(every: 10s, fn: mean, createEmpty: false)",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -1h)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"fair_price\")\n  |> aggregateWindow(every: 10s, fn: mean, createEmpty: false)",
           "refId": "A"
         }
       ],
@@ -373,7 +373,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -4h)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"account_value\")\n  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -4h)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"account_value\")\n  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)",
           "refId": "A"
         }
       ],
@@ -442,7 +442,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -4h)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"unrealized_pnl\")\n  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -4h)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"unrealized_pnl\")\n  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)",
           "refId": "A"
         }
       ],
@@ -502,7 +502,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"signals\")\n  |> filter(fn: (r) => r._field == \"flow_confidence\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"signals\")\n  |> filter(fn: (r) => r._field == \"flow_confidence\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -562,7 +562,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"signals\")\n  |> filter(fn: (r) => r._field == \"net_buying\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"signals\")\n  |> filter(fn: (r) => r._field == \"net_buying\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -622,7 +622,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"signals\")\n  |> filter(fn: (r) => r._field == \"volume_imbalance\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"signals\")\n  |> filter(fn: (r) => r._field == \"volume_imbalance\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -682,7 +682,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"signals\")\n  |> filter(fn: (r) => r._field == \"momentum\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"signals\")\n  |> filter(fn: (r) => r._field == \"momentum\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -742,7 +742,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"risk_metrics\")\n  |> filter(fn: (r) => r._field == \"stop_loss_distance_pct\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"risk_metrics\")\n  |> filter(fn: (r) => r._field == \"stop_loss_distance_pct\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -802,7 +802,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"risk_metrics\")\n  |> filter(fn: (r) => r._field == \"profit_target_distance_pct\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"risk_metrics\")\n  |> filter(fn: (r) => r._field == \"profit_target_distance_pct\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -862,7 +862,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"open_orders\")\n  |> last()",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"trading_metrics\")\n  |> filter(fn: (r) => r._field == \"open_orders\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -906,7 +906,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "query": "from(bucket: \"metrics\")\n  |> range(start: -1h)\n  |> filter(fn: (r) => r._measurement == \"order_events\")\n  |> pivot(rowKey:[\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 50)",
+          "query": "from(bucket: \"Metrics\")\n  |> range(start: -1h)\n  |> filter(fn: (r) => r._measurement == \"order_events\")\n  |> pivot(rowKey:[\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 50)",
           "refId": "A"
         }
       ],
