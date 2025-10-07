@@ -367,6 +367,44 @@ class EnhancedMarketMakingStrategy:
 
         return True
 
+    def should_cancel_orders(self, current_orders: List, fair_price: float, signals: Optional[MarketSignals] = None) -> List:
+        """Determine which orders should be cancelled based on price deviation from fair value
+
+        Args:
+            current_orders: List of currently open orders
+            fair_price: Current calculated fair price
+            signals: Optional market signals
+
+        Returns:
+            List of orders that should be cancelled
+        """
+        orders_to_cancel = []
+
+        if not current_orders or not fair_price:
+            return orders_to_cancel
+
+        # Cancel threshold: orders that are more than 0.5% away from fair price
+        cancel_threshold_pct = getattr(self.config, 'ORDER_CANCEL_THRESHOLD_PCT', 0.5) / 100
+
+        for order in current_orders:
+            try:
+                order_price = order.get('limit_px', 0)
+                if order_price == 0:
+                    continue
+
+                # Calculate distance from fair price
+                price_deviation = abs(order_price - fair_price) / fair_price
+
+                # Cancel if too far from fair price
+                if price_deviation > cancel_threshold_pct:
+                    orders_to_cancel.append(order)
+
+            except Exception as e:
+                self.logger.error(f"Error evaluating order for cancellation: {e}")
+                continue
+
+        return orders_to_cancel
+
     def find_optimal_quote_levels(self, orderbook: Dict, fair_value: float, side: str) -> Optional[float]:
         """Find optimal price level to join existing liquidity
 
