@@ -20,7 +20,9 @@
       "Bash(git mv:*)",
       "Bash(mkdir:*)",
       "Bash(python:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(timeout 5 python:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

@@ -206,6 +206,192 @@ The bot provides real-time status updates:
    - Risk Level: 🟢 LOW
 ```
 
+## 📊 Grafana Dashboard
+
+Professional real-time monitoring and control dashboard with InfluxDB + Grafana.
+
+### Features
+- **Real-time Metrics Visualization** - Account value, PnL, position size, fair price
+- **Market Microstructure Signals** - Flow confidence, momentum, volume imbalance
+- **Risk Management Monitoring** - Stop-loss distance, profit targets, open orders
+- **Order Event Tracking** - Complete history of placed/cancelled/filled orders
+- **Live Control Panel** - Emergency stop, resume trading, parameter adjustment
+- **Historical Charts** - 1-hour to 4-hour time series data
+
+### Installation Prerequisites
+
+1. **InfluxDB 2.7+**
+   - Download: https://portal.influxdata.com/downloads/
+   - Windows: Extract to `C:\influxdb`
+   - Mac: `brew install influxdb`
+
+2. **Grafana 8.0+**
+   - Download: https://grafana.com/grafana/download
+   - Windows: Extract to `C:\grafana`
+   - Mac: `brew install grafana`
+
+3. **Python Packages**
+   ```bash
+   pip install influxdb-client flask flask-cors
+   ```
+
+### Quick Start
+
+1. **Start InfluxDB**
+   ```bash
+   # Windows
+   cd C:\influxdb
+   influxd.exe
+
+   # Mac/Linux
+   brew services start influxdb
+   ```
+   - Setup at http://localhost:8086
+   - Username: `admin`, Password: `admin123`
+   - Organization: `trading`, Bucket: `metrics`
+   - **Save the API token generated!**
+
+2. **Set Environment Variable**
+   ```bash
+   # Windows PowerShell
+   $env:INFLUXDB_TOKEN="your-token-here"
+
+   # Mac/Linux
+   export INFLUXDB_TOKEN="your-token-here"
+   ```
+
+3. **Start Grafana**
+   ```bash
+   # Windows
+   cd C:\grafana\bin
+   grafana-server.exe
+
+   # Mac/Linux
+   brew services start grafana
+   ```
+   - Access at http://localhost:3000
+   - Login: admin/admin
+
+4. **Start Control API**
+   ```bash
+   python control_api.py
+   ```
+   - API runs on http://localhost:5000
+
+5. **Start Trading Bot**
+   ```bash
+   python main.py
+   ```
+
+### Using the Startup Script
+
+**Windows:**
+```cmd
+start_dashboard.bat
+```
+
+**Mac/Linux:**
+```bash
+chmod +x start_dashboard.sh
+./start_dashboard.sh
+```
+
+This will automatically:
+- Start InfluxDB
+- Start Grafana
+- Start Control API
+- Open browser to dashboard
+
+### Dashboard Access
+
+- **Grafana Dashboard**: http://localhost:3000
+- **InfluxDB UI**: http://localhost:8086
+- **Control API**: http://localhost:5000
+
+### Dashboard Features
+
+**Metrics Panels:**
+- Account Value (real-time)
+- Fair Price (real-time)
+- Position Size with color coding
+- Unrealized PnL with thresholds
+
+**Historical Charts:**
+- Fair Price History (1 hour)
+- Account Value History (4 hours)
+- PnL History (4 hours)
+
+**Signal Gauges:**
+- Flow Confidence (0-1)
+- Net Buying (-1 to +1)
+- Volume Imbalance (-1 to +1)
+- Momentum (-1 to +1)
+
+**Risk Monitoring:**
+- Stop-Loss Distance %
+- Profit Target Distance %
+- Open Orders Count
+
+**Order Events Table:**
+- Last 50 orders placed/cancelled/filled
+- Timestamp, side, price, size
+
+**Control Buttons:**
+- 🛑 Emergency Stop (instantly disables trading)
+- ✅ Resume Trading (re-enables trading)
+- Configuration display and adjustment
+
+### Detailed Setup Instructions
+
+For complete step-by-step setup including:
+- InfluxDB data source configuration
+- Dashboard import process
+- Plugin installation
+- Control panel setup
+- Troubleshooting guide
+
+See: **[GRAFANA_SETUP.md](GRAFANA_SETUP.md)**
+
+### Dynamic Configuration
+
+The bot supports live parameter changes via `live_config.json`:
+
+```json
+{
+  "enable_trading": true,
+  "risk_multiplier": 1.0,
+  "max_orders_per_side": 3,
+  "max_position_pct": 50.0,
+  "base_spread": 0.001,
+  "order_size_pct": 5.0,
+  "stop_loss_pct": 2.0,
+  "profit_target_pct": 3.0
+}
+```
+
+Changes are automatically reloaded every 5 seconds - no need to restart the bot!
+
+### Control API Endpoints
+
+```bash
+# Get current configuration
+curl http://localhost:5000/config
+
+# Update configuration
+curl -X POST http://localhost:5000/config \
+  -H "Content-Type: application/json" \
+  -d '{"risk_multiplier": 0.5}'
+
+# Emergency stop
+curl -X POST http://localhost:5000/emergency_stop
+
+# Resume trading
+curl -X POST http://localhost:5000/resume_trading
+
+# Health check
+curl http://localhost:5000/health
+```
+
 ## 🧪 Testing
 
 ### Connection Test

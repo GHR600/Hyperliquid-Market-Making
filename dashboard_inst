@@ -1,0 +1,262 @@
+# GRAFANA + INFLUXDB DASHBOARD IMPLEMENTATION
+
+## OBJECTIVE
+Create a professional local Grafana dashboard for monitoring and controlling the trading bot with real-time metrics visualization and parameter adjustment capabilities.
+
+---
+
+## PREREQUISITES
+
+### Install Required Software
+1. **InfluxDB 2.7**: Download from https://portal.influxdata.com/downloads/
+   - Windows: Extract to `C:\influxdb`
+   - Mac: `brew install influxdb`
+   - Start: Run `influxd.exe` (Windows) or `brew services start influxdb` (Mac)
+   - Setup at http://localhost:8086: username=admin, password=admin123, org=trading, bucket=metrics
+   - **SAVE THE API TOKEN GENERATED**
+
+2. **Grafana**: Download from https://grafana.com/grafana/download
+   - Windows: Extract to `C:\grafana`
+   - Mac: `brew install grafana`
+   - Start: Run `grafana-server.exe` (Windows) or `brew services start grafana` (Mac)
+   - Access at http://localhost:3000: admin/admin
+
+3. **Python Packages**:
+   ```bash
+   pip install influxdb-client flask flask-cors
+   ```
+
+---
+
+## IMPLEMENTATION TASKS
+
+### TASK 1: Create InfluxDB Metrics Logger
+
+**File**: `core/metrics_logger.py`
+
+Create a class `InfluxMetricsLogger` that:
+- Connects to InfluxDB at http://localhost:8086
+- Uses token from setup, org="trading", bucket="metrics"
+- Has methods to log:
+  - `log_trading_metrics(metrics: dict)` - fair_price, account_value, position_size, unrealized_pnl, spread_pct, open_orders
+  - `log_signals(signals)` - flow_confidence, net_buying, volume_imbalance, momentum, adverse_risk
+  - `log_order_event(event_type, side, price, size, order_id)` - order placed/cancelled/filled events
+  - `log_risk_metrics(risk_status: dict)` - stop_loss_price, profit_target_price, distances
+
+---
+
+### TASK 2: Integrate Metrics Logger into Main Bot
+
+**File**: `main.py`
+
+**In `__init__` method**:
+- Import and initialize `InfluxMetricsLogger`
+- Add: `self.metrics_logger = InfluxMetricsLogger(self.config)`
+
+**In `log_enhanced_status` method** (at the end):
+- Call `self.metrics_logger.log_trading_metrics()` with current metrics dict
+- Call `self.metrics_logger.log_signals()` if microstructure exists
+- Call `self.metrics_logger.log_risk_metrics()` if position exists
+
+**In `execute_enhanced_trading_logic` method**:
+- After placing orders: log each successful order with `log_order_event('placed', ...)`
+- After cancelling orders: log each cancelled order with `log_order_event('cancelled', ...)`
+
+---
+
+### TASK 3: Create Dynamic Configuration System
+
+**File**: `utils/dynamic_config.py`
+
+Create a class `DynamicConfig` that:
+- Reads from `live_config.json` every 5 seconds
+- Has method `get(key, default)` that returns current value for any config parameter
+- Has method `refresh_if_needed()` that reloads file if 5+ seconds passed
+- Default parameters: enable_trading, risk_multiplier, max_orders_per_side, max_position_pct, base_spread, order_size_pct, stop_loss_pct, profit_target_pct
+
+**File**: `main.py`
+
+In `__init__`:
+- Import and initialize `DynamicConfig`
+- Add: `self.dynamic_config = DynamicConfig()`
+
+In `execute_enhanced_trading_logic`:
+- At start, read: `enable_trading`, `risk_multiplier`, `max_orders_per_side`
+- If `enable_trading == False`, skip trading logic and return
+- Apply `risk_multiplier` to order sizing calculations
+- Use dynamic `max_orders_per_side` instead of config value
+
+---
+
+### TASK 4: Create Control API
+
+**File**: `control_api.py` (in root directory)
+
+Create Flask API with endpoints:
+- `GET /config` - returns current live_config.json
+- `POST /config` - updates parameters in live_config.json (accepts JSON body)
+- `POST /emergency_stop` - sets enable_trading=False
+- `POST /resume_trading` - sets enable_trading=True
+- `GET /health` - returns {"status": "ok"}
+
+Run on port 5000 with `app.run(host='0.0.0.0', port=5000)`
+
+---
+
+### TASK 5: Create Grafana Dashboard JSON
+
+**File**: `grafana_dashboard.json` (in root directory)
+
+Create a Grafana dashboard JSON with panels:
+
+1. **Row 1 - Current Metrics** (stat panels):
+   - Account Value (query: last value of trading_metrics.account_value)
+   - Fair Price (query: last value of trading_metrics.fair_price)
+   - Position Size (query: last value of trading_metrics.position_size)
+   - Unrealized PnL (query: last value of trading_metrics.unrealized_pnl)
+
+2. **Row 2 - Time Series Charts**:
+   - Fair Price History (last 1 hour)
+   - Account Value History (last 4 hours)
+   - PnL History (last 4 hours)
+
+3. **Row 3 - Signals** (gauges):
+   - Flow Confidence (0-1 range)
+   - Net Buying (-1 to +1 range)
+   - Volume Imbalance (-1 to +1 range)
+   - Momentum (-1 to +1 range)
+
+4. **Row 4 - Risk Metrics** (stat panels):
+   - Stop Loss Distance %
+   - Profit Target Distance %
+   - Open Orders count
+
+5. **Row 5 - Order Events Table**:
+   - Recent orders (last 50) showing: time, event_type, side, price, size
+
+Example Flux query format:
+```flux
+from(bucket: "metrics")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "trading_metrics")
+  |> filter(fn: (r) => r._field == "fair_price")
+```
+
+---
+
+### TASK 6: Grafana Configuration Instructions
+
+**File**: `GRAFANA_SETUP.md`
+
+Create markdown file with step-by-step instructions:
+
+1. **Add InfluxDB Data Source**:
+   - Go to Configuration → Data Sources → Add → InfluxDB
+   - Query Language: Flux
+   - URL: http://localhost:8086
+   - Organization: trading
+   - Token: [paste your token]
+   - Default Bucket: metrics
+   - Save & Test
+
+2. **Import Dashboard**:
+   - Go to Dashboards → Import
+   - Upload grafana_dashboard.json
+   - Select InfluxDB data source
+   - Import
+
+3. **Install Required Plugins**:
+   - Go to Configuration → Plugins
+   - Install: "Button Panel" for control buttons
+   - Install: "Infinity" data source for API calls
+
+4. **Add Control Panels** (manual setup after import):
+   - Add Button Panel for "Emergency Stop"
+     - Method: POST
+     - URL: http://localhost:5000/emergency_stop
+     - Button text: 🛑 EMERGENCY STOP
+   - Add Button Panel for "Resume Trading"
+     - Method: POST
+     - URL: http://localhost:5000/resume_trading
+     - Button text: ✅ RESUME TRADING
+   - Add Infinity panel for parameter controls
+     - URL: http://localhost:5000/config (GET to display current)
+     - Form inputs to POST updates
+
+---
+
+### TASK 7: Update README
+
+**File**: `README.md`
+
+Add new section "## 📊 Grafana Dashboard" with:
+- Overview of monitoring capabilities
+- Installation prerequisites
+- How to start InfluxDB and Grafana
+- How to start control API: `python control_api.py`
+- How to access dashboard: http://localhost:3000
+- Reference to GRAFANA_SETUP.md for detailed setup
+
+---
+
+### TASK 8: Create Startup Script
+
+**File**: `start_dashboard.bat` (Windows) and `start_dashboard.sh` (Mac/Linux)
+
+Windows batch file that:
+1. Starts InfluxDB in separate window
+2. Starts Grafana in separate window
+3. Starts control API in separate window
+4. Opens browser to http://localhost:3000
+
+Mac/Linux shell script that:
+1. Starts InfluxDB service
+2. Starts Grafana service
+3. Starts control API in background
+4. Opens browser to http://localhost:3000
+
+---
+
+## TESTING CHECKLIST
+
+After implementation, verify:
+- [ ] InfluxDB receives metrics (check http://localhost:8086 Data Explorer)
+- [ ] Control API responds to GET /config
+- [ ] Grafana dashboard displays real-time data
+- [ ] Bot respects dynamic config changes
+- [ ] Emergency stop button works
+- [ ] Order events appear in dashboard table
+- [ ] All time-series charts update in real-time
+
+---
+
+## FILE STRUCTURE AFTER IMPLEMENTATION
+
+```
+Hyperliquid-Market-Making/
+├── main.py (modified)
+├── control_api.py (NEW)
+├── live_config.json (auto-created)
+├── grafana_dashboard.json (NEW)
+├── GRAFANA_SETUP.md (NEW)
+├── start_dashboard.bat (NEW)
+├── start_dashboard.sh (NEW)
+├── core/
+│   ├── metrics_logger.py (NEW)
+│   └── ... (existing files)
+├── utils/
+│   ├── dynamic_config.py (NEW)
+│   └── ... (existing files)
+└── ... (other existing files)
+```
+
+---
+
+## NOTES
+
+- All components run locally on localhost
+- No remote servers or cloud services required
+- Dashboard accessible at http://localhost:3000
+- InfluxDB accessible at http://localhost:8086
+- Control API accessible at http://localhost:5000
+- Bot continues to work if Grafana/InfluxDB are offline (graceful degradation)

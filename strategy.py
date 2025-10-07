@@ -892,7 +892,7 @@ class EnhancedMarketMakingStrategyWithRisk(EnhancedMarketMakingStrategy):
         """Get risk status"""
         if not position or position.size == 0:
             return {'status': 'FLAT', 'no_position': True}
-        
+
         return {
             'position_size': position.size,
             'entry_price': getattr(self, 'position_entry_price', 0) or 0,
@@ -904,4 +904,30 @@ class EnhancedMarketMakingStrategyWithRisk(EnhancedMarketMakingStrategy):
             'profit_target_distance': 0.0,
             'profit_levels_hit': list(getattr(self, 'profit_levels_hit', set()))
         }
-    
+
+    def get_strategy_status(self, orderbook: Dict) -> Dict:
+        """Get current strategy status for logging"""
+        try:
+            # Analyze current market condition
+            imbalance, gaps, liquidity, condition = self.orderbook_analyzer.analyze_orderbook(orderbook)
+            adverse_risk = self.orderbook_analyzer.calculate_adverse_selection_risk(orderbook, self.recent_fills)
+
+            return {
+                'condition_type': condition.condition_type,
+                'condition_confidence': condition.confidence,
+                'adverse_risk': adverse_risk.overall_risk,
+                'spread_percentile': adverse_risk.spread_percentile,
+                'book_stability': condition.book_stability,
+                'imbalance_ratio': imbalance.imbalance_ratio
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting strategy status: {e}")
+            return {
+                'condition_type': 'UNKNOWN',
+                'condition_confidence': 0.0,
+                'adverse_risk': 0.0,
+                'spread_percentile': 0.0,
+                'book_stability': 0.0,
+                'imbalance_ratio': 0.0
+            }
+

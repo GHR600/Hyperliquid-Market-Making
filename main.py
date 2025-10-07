@@ -13,6 +13,8 @@ from strategy import EnhancedMarketMakingStrategyWithRisk
 from core.trading_client import TradingClient
 from analysis.market_microstructure import MarketMicrostructure
 from core.websocket_manager import DataManagerWithWebSocket
+from core.metrics_logger import InfluxMetricsLogger
+from utils.dynamic_config import DynamicConfig
 
 class EnhancedHyperliquidMarketMaker:
     def __init__(self):
@@ -38,7 +40,13 @@ class EnhancedHyperliquidMarketMaker:
         
         self.microstructure = MarketMicrostructure(self.config)
         print("   🧠 Microstructure analyzer initialized")
-        
+
+        self.metrics_logger = InfluxMetricsLogger(self.config)
+        print("   📊 Metrics logger initialized")
+
+        self.dynamic_config = DynamicConfig()
+        print("   🔧 Dynamic configuration system initialized")
+
         # Learning phase state
         self.learning_phase_active = self.config.ENABLE_LEARNING_PHASE
         self.learning_start_time = None
@@ -489,10 +497,20 @@ class EnhancedHyperliquidMarketMaker:
         if self.learning_phase_active:
             # Skip trading during learning phase
             return
-        
+
+        # Check dynamic configuration
+        enable_trading = self.dynamic_config.get('enable_trading', True)
+        if not enable_trading:
+            print("⏸️  Trading DISABLED by dynamic config - skipping trading logic")
+            return
+
+        risk_multiplier = self.dynamic_config.get('risk_multiplier', 1.0)
+        max_orders_per_side = self.dynamic_config.get('max_orders_per_side', self.config.MAX_ORDERS_PER_SIDE)
+
         print("\n🎯 EXECUTING ENHANCED TRADING LOGIC WITH RISK MANAGEMENT")
         print("-" * 60)
-        
+        print(f"🔧 Dynamic Config: trading={enable_trading}, risk_mult={risk_multiplier:.2f}, max_orders={max_orders_per_side}")
+
         try:
             current_price = orderbook.get('mid_price', 0)
             position = self.position_tracker.get_position(self.config.SYMBOL)
@@ -618,28 +636,40 @@ class EnhancedHyperliquidMarketMaker:
                         print("✅ Orders cancelled successfully")
                         for order_id in orders_to_cancel:
                             if order_id in self.position_tracker.open_orders:
+                                order = self.position_tracker.open_orders[order_id]
+                                # Log cancellation event
+                                self.metrics_logger.log_order_event(
+                                    event_type='cancelled',
+                                    side='buy' if order.side == 'B' else 'sell',
+                                    price=float(order.limit_px),
+                                    size=float(order.sz),
+                                    order_id=order_id
+                                )
                                 del self.position_tracker.open_orders[order_id]
                     else:
                         print("❌ Failed to cancel some orders")
             
             # Generate new orders with risk management (UPDATED!)
-            max_total_orders = self.config.MAX_ORDERS_PER_SIDE * 2
+            max_total_orders = max_orders_per_side * 2
             current_order_count = len(current_orders)
-            
+
             print(f"📊 Order capacity: {current_order_count}/{max_total_orders}")
-            
+
             if current_order_count < max_total_orders:
                 print("🎯 Generating enhanced orders with risk management...")
                 account_value = self.position_tracker.get_account_value()
-                
+
+                # Apply risk multiplier to account value for sizing
+                adjusted_account_value = account_value * risk_multiplier
+
                 # Use risk-aware order generation (NEW!)
                 if hasattr(self.strategy, 'generate_enhanced_orders_with_risk'):
                     new_orders = self.strategy.generate_enhanced_orders_with_risk(
-                        orderbook, position, account_value, signals
+                        orderbook, position, adjusted_account_value, signals
                     )
                 else:
                     # Fallback to normal order generation
-                    new_orders = self.strategy.generate_orders(orderbook, position, account_value, signals)
+                    new_orders = self.strategy.generate_orders(orderbook, position, adjusted_account_value, signals)
                 
                 if new_orders:
                     print(f"📦 Placing {len(new_orders)} risk-managed orders...")
@@ -660,7 +690,16 @@ class EnhancedHyperliquidMarketMaker:
                             self.position_tracker.open_orders[order_id] = order
                             successful_orders += 1
                             print(f"   ✅ Tracking risk-managed order: {order_id}")
-                    
+
+                            # Log order event to InfluxDB
+                            self.metrics_logger.log_order_event(
+                                event_type='placed',
+                                side='buy' if new_orders[i]['is_buy'] else 'sell',
+                                price=float(new_orders[i].get('limit_px', 0)),
+                                size=float(new_orders[i]['sz']),
+                                order_id=order_id
+                            )
+
                     print(f"📈 Successfully placed {successful_orders}/{len(new_orders)} risk-managed orders")
                 else:
                     print("⚠️  No orders generated (risk management or unfavorable conditions)")
@@ -826,7 +865,28 @@ class EnhancedHyperliquidMarketMaker:
                 self.logger.info(f"Enhanced+Risk: ${account_value:.0f} | Position: {position.size:.4f} ({position_pct:.1f}%) | PnL: ${pnl:.2f} | Orders: {len(current_orders)} | Fair: ${fair_price:.5f}")
             else:
                 self.logger.info(f"Enhanced+Risk: ${account_value:.0f} | No position | Orders: {len(current_orders)} | Fair: ${fair_price:.5f}")
-                
+
+            # Log metrics to InfluxDB for Grafana dashboard
+            metrics = {
+                'fair_price': fair_price or 0,
+                'account_value': account_value,
+                'position_size': position.size if position else 0,
+                'unrealized_pnl': pnl if position and fair_price else 0,
+                'spread_pct': orderbook.get('spread_pct', 0) if 'orderbook' in locals() else 0,
+                'open_orders': len(current_orders)
+            }
+            self.metrics_logger.log_trading_metrics(metrics)
+
+            # Log microstructure signals
+            if signals:
+                self.metrics_logger.log_signals(signals)
+
+            # Log risk metrics if position exists
+            if position and hasattr(self.strategy, 'get_risk_status') and current_price > 0:
+                risk_status = self.strategy.get_risk_status(position, current_price)
+                if not risk_status.get('no_position'):
+                    self.metrics_logger.log_risk_metrics(risk_status)
+
         except Exception as e:
             print(f"❌ Error logging enhanced status: {e}")
             self.logger.error(f"Error logging enhanced status: {e}")

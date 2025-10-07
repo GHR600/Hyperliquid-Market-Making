@@ -1,0 +1,10 @@
+{
+  "enable_trading": true,
+  "risk_multiplier": 1.0,
+  "max_orders_per_side": 3,
+  "max_position_pct": 50.0,
+  "base_spread": 0.001,
+  "order_size_pct": 5.0,
+  "stop_loss_pct": 2.0,
+  "profit_target_pct": 3.0
+}
