@@ -744,7 +744,7 @@ class EnhancedHyperliquidMarketMaker:
 
             # Funding rate monitoring
             if self.config.ENABLE_FUNDING_ALERTS:
-                funding_rate = self.data_manager.get_funding_rate()
+                funding_rate = await self.data_manager.get_funding_rate()
                 funding_pct = funding_rate * 100
 
                 print(f"💸 Funding Rate: {funding_pct:.4f}%")

@@ -14,8 +14,8 @@ class InfluxMetricsLogger:
         # InfluxDB configuration
         self.url = "http://localhost:8086"
         self.token = None  # Will be loaded from config or environment
-        self.org = "trading"
-        self.bucket = "metrics"
+        self.org = "Trading"  # Case-sensitive! Must match InfluxDB org name
+        self.bucket = "Metrics"  # Case-sensitive! Must match InfluxDB bucket name
 
         self.client = None
         self.write_api = None
